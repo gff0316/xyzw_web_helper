@@ -125,6 +125,10 @@ const api = {
         `/daily-tasks/history?roleId=${roleId}&page=${page}&limit=${limit}`,
       ),
   },
+  // 咸鱼之王相关
+  xyzw: {
+    fetchToken: (payload) => request.post("/xyzw/token", payload),
+  },
 
   // 用户相关
   user: {
