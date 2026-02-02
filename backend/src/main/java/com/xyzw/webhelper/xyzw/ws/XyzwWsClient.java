@@ -31,7 +31,7 @@ final class XyzwWsClient extends WebSocketClient {
 
     @Override
     public void onOpen(ServerHandshake handshakeData) {
-        logger.info("WebSocket connected: {}", getURI());
+        logger.info("websocket已连接: {}", getURI());
         startHeartbeat();
     }
 
@@ -62,7 +62,7 @@ final class XyzwWsClient extends WebSocketClient {
 
     @Override
     public void onClose(int code, String reason, boolean remote) {
-        logger.info("WebSocket closed: code={}, reason={}", code, reason);
+        logger.info("WebSocket链接关闭: code={}, reason={}", code, reason);
         stopHeartbeat();
     }
 

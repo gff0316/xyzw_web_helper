@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="card">
     <div class="header">
       <h1>XYZW WebSocket 控制台</h1>
@@ -35,7 +35,7 @@
       >
         建立 WebSocket
       </button>
-      <button class="ghost" :disabled="!client" @click="handleDisconnect">
+      <button class="ghost" :disabled="status !== 'connected'" @click="handleDisconnect">
         断开连接
       </button>
       <button
@@ -48,7 +48,7 @@
     </div>
 
     <div class="status">
-      <strong>连接状态:</strong>
+      <strong>连接状态</strong>
       <span :class="statusClass">{{ statusText }}</span>
       <span v-if="token">Token: {{ maskedToken }}</span>
     </div>
@@ -62,7 +62,6 @@
 
 <script setup>
 import { computed, onBeforeUnmount, reactive, ref } from "vue";
-import { XyzwWebSocketClient } from "./utils/xyzwWebSocket.js";
 import { g_utils } from "./utils/bonProtocol.js";
 
 const form = reactive({
@@ -76,7 +75,6 @@ const binFile = ref(null);
 const loading = ref(false);
 const status = ref("disconnected");
 const logs = ref([]);
-let client = null;
 
 const addLog = (message) => {
   logs.value.unshift(`[${new Date().toLocaleTimeString()}] ${message}`);
@@ -172,75 +170,95 @@ const buildWsUrl = () => {
   )}&e=x&lang=chinese`;
 };
 
-const handleConnect = () => {
+const handleConnect = async () => {
   if (!token.value) {
     addLog("请先获取 token。");
     return;
   }
 
-  if (client) {
-    client.disconnect();
-  }
-
   status.value = "connecting";
   const wsUrl = buildWsUrl();
-  client = new XyzwWebSocketClient({
-    url: wsUrl,
-    utils: g_utils,
-    heartbeatMs: 5000,
-  });
-
-  client.onConnect = () => {
-    status.value = "connected";
-    addLog("WebSocket 已连接。");
-  };
-
-  client.onDisconnect = (evt) => {
-    status.value = "disconnected";
-    addLog(`WebSocket 已断开: ${evt.code || ""}`);
-  };
-
-  client.onError = (error) => {
-    status.value = "error";
-    addLog(`WebSocket 错误: ${error.message || error}`);
-  };
-
-  client.setMessageListener((message) => {
-    if (message?.cmd) {
-      addLog(`收到消息: ${message.cmd}`);
+  try {
+    const response = await fetch("/api/v1/xyzw/ws/connect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: token.value, wsUrl }),
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.success) {
+      throw new Error(payload.message || "建立 WebSocket 失败");
     }
-  });
-
-  client.init();
-  addLog(`开始连接 WebSocket: ${wsUrl}`);
-};
-
-const handleDisconnect = () => {
-  if (client) {
-    client.disconnect();
-    client = null;
-    status.value = "disconnected";
-    addLog("已手动断开 WebSocket。");
+    addLog(`已请求后端建立 WebSocket: ${wsUrl}`);
+  } catch (error) {
+    status.value = "error";
+    addLog(`建立 WebSocket 失败: ${error.message}`);
   }
 };
 
-const handleBottleHelper = () => {
-  if (!client || status.value !== "connected") {
-    addLog("WebSocket 未连接，无法操作罐子。");
+const handleDisconnect = async () => {
+  if (!token.value) {
+    addLog("请先获取 token。");
     return;
   }
 
-  client.send("bottlehelper_stop", { bottleType: 0 });
-  setTimeout(() => {
-    client.send("bottlehelper_start", { bottleType: 0 });
-    client.send("role_getroleinfo");
-    addLog("已发送罐子启动/重启指令。");
-  }, 500);
+  try {
+    const response = await fetch("/api/v1/xyzw/ws/disconnect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: token.value }),
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.success) {
+      throw new Error(payload.message || "断开失败");
+    }
+    status.value = "disconnected";
+    addLog("已通知后端断开 WebSocket。");
+  } catch (error) {
+    addLog(`断开失败: ${error.message}`);
+  }
 };
 
-onBeforeUnmount(() => {
-  if (client) {
-    client.disconnect();
+const handleBottleHelper = async () => {
+  if (status.value !== "connected") {
+    addLog("WebSocket 未连接，无法操作罐子。");
+    return;
   }
-});
+  try {
+    const response = await fetch("/api/v1/xyzw/ws/bottlehelper/restart", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: token.value, bottleType: 0 }),
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.success) {
+      throw new Error(payload.message || "重启罐子失败");
+    }
+    addLog("已请求后端重启罐子。");
+  } catch (error) {
+    addLog(`重启罐子失败: ${error.message}`);
+  }
+};
+
+const refreshStatus = async () => {
+  if (!token.value) return;
+  try {
+    const response = await fetch(
+      `/api/v1/xyzw/ws/status?token=${encodeURIComponent(token.value)}`,
+    );
+    const payload = await response.json();
+    if (response.ok && payload.success && payload.data?.status) {
+      status.value = payload.data.status;
+    }
+  } catch (error) {
+    // ignore
+  }
+};
+
+const statusTimer = setInterval(refreshStatus, 2000);
+onBeforeUnmount(() => clearInterval(statusTimer));
 </script>
+
+
+
+
+

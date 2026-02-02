@@ -72,9 +72,13 @@ public class XyzwWsController {
     }
 
     private String buildDefaultWsUrl(String token) {
-        return "wss://xxz-xyzw.hortorgames.com/agent?p=" +
-            java.net.URLEncoder.encode(token, java.nio.charset.StandardCharsets.UTF_8) +
-            "&e=x&lang=chinese";
+        try {
+            return "wss://xxz-xyzw.hortorgames.com/agent?p=" +
+                java.net.URLEncoder.encode(token, "UTF-8") +
+                "&e=x&lang=chinese";
+        } catch (java.io.UnsupportedEncodingException ex) {
+            throw new IllegalStateException("Unsupported encoding UTF-8", ex);
+        }
     }
 
     private Map<String, Object> build(boolean success, String message, Object data) {
