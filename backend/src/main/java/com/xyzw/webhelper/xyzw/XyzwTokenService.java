@@ -1,54 +1,37 @@
 package com.xyzw.webhelper.xyzw;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.xyzw.webhelper.xyzw.dto.XyzwTokenRequest;
-import com.xyzw.webhelper.xyzw.dto.XyzwTokenResponse;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
-import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestTemplate;
-
-import java.util.Map;
+import org.springframework.web.util.UriComponentsBuilder;
 
 @Service
 public class XyzwTokenService {
+    private static final String TOKEN_ENDPOINT = "https://xxz-xyzw.hortorgames.com/login/authuser";
     private final RestTemplate restTemplate = new RestTemplate();
-    private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public XyzwTokenResponse resolveToken(XyzwTokenRequest request) {
-        String token = request.getToken();
-
-        if (!StringUtils.hasText(token) && StringUtils.hasText(request.getTokenUrl())) {
-            token = fetchTokenFromUrl(request.getTokenUrl());
+    public byte[] fetchTokenBytes(byte[] payload) {
+        if (payload == null || payload.length == 0) {
+            throw new IllegalArgumentException("bin文件为空");
         }
 
-        if (!StringUtils.hasText(token)) {
-            throw new IllegalArgumentException("token字段为空");
-        }
+        String url = UriComponentsBuilder.fromHttpUrl(TOKEN_ENDPOINT)
+            .queryParam("_seq", 1)
+            .toUriString();
 
-        return new XyzwTokenResponse(
-            request.getName(),
-            token,
-            request.getServer(),
-            request.getWsUrl()
-        );
-    }
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
 
-    private String fetchTokenFromUrl(String tokenUrl) {
-        ResponseEntity<String> response = restTemplate.getForEntity(tokenUrl, String.class);
-        if (!response.getStatusCode().is2xxSuccessful()) {
+        HttpEntity<byte[]> request = new HttpEntity<byte[]>(payload, headers);
+        ResponseEntity<byte[]> response = restTemplate.postForEntity(url, request, byte[].class);
+
+        if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
             throw new IllegalArgumentException("获取token失败，HTTP状态码: " + response.getStatusCodeValue());
         }
 
-        try {
-            Map<?, ?> payload = objectMapper.readValue(response.getBody(), Map.class);
-            Object token = payload.get("token");
-            if (token == null) {
-                throw new IllegalArgumentException("响应中未找到token字段");
-            }
-            return token.toString();
-        } catch (Exception error) {
-            throw new IllegalArgumentException("解析token响应失败: " + error.getMessage(), error);
-        }
+        return response.getBody();
     }
 }

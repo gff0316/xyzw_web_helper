@@ -11,8 +11,8 @@
         <input v-model="form.name" placeholder="例如：主号" />
       </label>
       <label class="field">
-        Token 获取地址
-        <input v-model="form.tokenUrl" placeholder="https://example.com/token" />
+        Bin 文件
+        <input type="file" accept=".bin" @change="handleFileChange" />
       </label>
       <label class="field">
         服务器名称（可选）
@@ -67,12 +67,12 @@ import { g_utils } from "./utils/bonProtocol.js";
 
 const form = reactive({
   name: "",
-  tokenUrl: "",
   server: "",
   wsUrl: "",
 });
 
 const token = ref("");
+const binFile = ref(null);
 const loading = ref(false);
 const status = ref("disconnected");
 const logs = ref([]);
@@ -107,23 +107,48 @@ const maskedToken = computed(() => {
   return `${token.value.slice(0, 6)}...${token.value.slice(-4)}`;
 });
 
+const decodeTokenFromBase64 = (encoded) => {
+  const binary = atob(encoded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  const msg = g_utils.parse(bytes);
+  const data = msg.getData();
+  const currentTime = Date.now();
+  const sessId = currentTime * 100 + Math.floor(Math.random() * 100);
+  const connId = currentTime + Math.floor(Math.random() * 10);
+
+  return JSON.stringify({
+    ...data,
+    sessId,
+    connId,
+    isRestore: 0,
+  });
+};
+
+const handleFileChange = (event) => {
+  const file = event.target.files?.[0];
+  binFile.value = file || null;
+};
+
 const handleFetchToken = async () => {
-  if (!form.name || !form.tokenUrl) {
-    addLog("请填写账号名称和 Token 获取地址。");
+  if (!form.name || !binFile.value) {
+    addLog("请填写账号名称并选择 bin 文件。");
     return;
   }
 
   loading.value = true;
   try {
+    const formData = new FormData();
+    formData.append("file", binFile.value);
+    formData.append("name", form.name);
+    if (form.server) formData.append("server", form.server);
+    if (form.wsUrl) formData.append("wsUrl", form.wsUrl);
+
     const response = await fetch("/api/v1/xyzw/token", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: form.name,
-        tokenUrl: form.tokenUrl,
-        server: form.server,
-        wsUrl: form.wsUrl,
-      }),
+      body: formData,
     });
 
     const payload = await response.json();
@@ -131,7 +156,7 @@ const handleFetchToken = async () => {
       throw new Error(payload.message || "获取 token 失败");
     }
 
-    token.value = payload.data.token;
+    token.value = decodeTokenFromBase64(payload.data.token);
     addLog(`已获取 token: ${maskedToken.value}`);
   } catch (error) {
     addLog(`获取 token 失败: ${error.message}`);

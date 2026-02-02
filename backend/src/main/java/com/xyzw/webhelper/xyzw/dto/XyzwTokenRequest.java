@@ -2,10 +2,8 @@ package com.xyzw.webhelper.xyzw.dto;
 
 public class XyzwTokenRequest {
     private String name;
-    private String tokenUrl;
     private String server;
     private String wsUrl;
-    private String token;
 
     public String getName() {
         return name;
@@ -13,14 +11,6 @@ public class XyzwTokenRequest {
 
     public void setName(String name) {
         this.name = name;
-    }
-
-    public String getTokenUrl() {
-        return tokenUrl;
-    }
-
-    public void setTokenUrl(String tokenUrl) {
-        this.tokenUrl = tokenUrl;
     }
 
     public String getServer() {
@@ -37,13 +27,5 @@ public class XyzwTokenRequest {
 
     public void setWsUrl(String wsUrl) {
         this.wsUrl = wsUrl;
-    }
-
-    public String getToken() {
-        return token;
-    }
-
-    public void setToken(String token) {
-        this.token = token;
     }
 }
