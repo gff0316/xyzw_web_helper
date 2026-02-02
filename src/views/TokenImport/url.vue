@@ -25,7 +25,7 @@
         <div class="form-tips">
           <span class="form-tip"> 接口应返回包含token字段的JSON数据 </span>
           <span class="form-tip cors-tip">
-            注意：如果是跨域URL，服务器需要支持CORS，否则会被浏览器阻止
+            注意：此处将通过后端代理请求，确保接口可访问
           </span>
         </div>
       </template>
@@ -86,7 +86,6 @@ import {
   NCollapseItem,
   useMessage,
 } from "naive-ui";
-import axios from "axios";
 
 const tokenStore = useTokenStore();
 const message = useMessage();
@@ -134,30 +133,22 @@ const handleUrlImport = async () => {
 
   isImporting.value = true;
   try {
-    const response = await axios.get(urlForm.url);
-    if (response.status === 200 && response.data && response.data.token) {
-      const newToken = {
-        name: urlForm.name,
-        token: response.data.token,
-        server: urlForm.server || "未知",
-        wsUrl: urlForm.wsUrl || "",
-        id: Date.now().toString(),
-        sourceUrl: urlForm.url,
-        importMethod: 'url'
-      };
-      tokenStore.addToken(newToken);
-      message.success("Token添加成功");
-      // 重置表单
-      urlForm.name = "";
-      urlForm.url = "";
-      urlForm.server = "";
-      urlForm.wsUrl = "";
-      $emit("ok");
-    } else {
-      message.error("接口返回数据格式不正确，未找到token字段");
-    }
+    const tokenPayload = await tokenStore.fetchTokenFromApi({
+      name: urlForm.name,
+      tokenUrl: urlForm.url,
+      server: urlForm.server,
+      wsUrl: urlForm.wsUrl,
+    });
+    await tokenStore.addTokenAndConnect(tokenPayload);
+    message.success("Token添加成功");
+    // 重置表单
+    urlForm.name = "";
+    urlForm.url = "";
+    urlForm.server = "";
+    urlForm.wsUrl = "";
+    $emit("ok");
   } catch (error) {
-    message.error("获取Token失败，请检查URL地址或网络连接");
+    message.error(error?.message || "获取Token失败，请检查URL地址或网络连接");
   } finally {
     isImporting.value = false;
   }

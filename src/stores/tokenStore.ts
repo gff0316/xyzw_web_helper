@@ -4,6 +4,7 @@ import { computed, ref } from "vue";
 import { g_utils, ProtoMsg } from "@/utils/bonProtocol";
 import { gameLogger, tokenLogger, wsLogger } from "@/utils/logger";
 import { XyzwWebSocketClient } from "@/utils/xyzwWebSocket";
+import api from "@/api";
 
 import { emitPlus } from "./events/index.js";
 import useIndexedDB from "@/hooks/useIndexedDB";
@@ -19,7 +20,7 @@ declare interface TokenData {
   wsUrl: string | null; // 可选的自定义WebSocket URL
   server: string;
   remark?: string; // 备注信息
-  importMethod?: "manual" | "bin" | "url" | "wxQrcode"; // 导入方式：manual（手动）、bin文件或url链接
+  importMethod?: "manual" | "bin" | "url" | "wxQrcode" | "api"; // 导入方式：manual（手动）、bin文件或url链接
   sourceUrl?: string; // 当importMethod为url时，存储url链接
   upgradedToPermanent?: boolean; // 是否升级为长期有效
   upgradedAt?: string; // 升级时间
@@ -319,20 +320,23 @@ export const useTokenStore = defineStore("tokens", () => {
           const gameToken = gameTokens.value.find((t) => t.id === tokenId);
           console.log(gameToken);
           if (gameToken) {
-            if (gameToken.importMethod === "url" && gameToken.sourceUrl) {
-              // URL形式token刷新
+            if (
+              (gameToken.importMethod === "url" ||
+                gameToken.importMethod === "api") &&
+              gameToken.sourceUrl
+            ) {
+              // URL/API形式token刷新
               try {
-                const response = await fetch(gameToken.sourceUrl);
-                if (response.ok) {
-                  const data = await response.json();
-                  if (data.token) {
-                    // 直接使用返回的token，无需transformToken
-                    updateToken(tokenId, { ...gameToken, token: data.token });
-                    console.log("从URL获取token成功:", gameToken.name);
-                  }
-                }
+                const tokenPayload = await fetchTokenFromApi({
+                  name: gameToken.name,
+                  tokenUrl: gameToken.sourceUrl,
+                  server: gameToken.server,
+                  wsUrl: gameToken.wsUrl,
+                });
+                updateToken(tokenId, { ...gameToken, token: tokenPayload.token });
+                console.log("从接口获取token成功:", gameToken.name);
               } catch (error) {
-                console.error("从URL获取token失败:", error);
+                console.error("从接口获取token失败:", error);
               }
             } else if (
               gameToken.importMethod === "bin" ||
@@ -489,6 +493,48 @@ export const useTokenStore = defineStore("tokens", () => {
         message: `Token "${name}" 添加失败: ${error.message}`,
       };
     }
+  };
+
+  const fetchTokenFromApi = async (payload: {
+    name: string;
+    tokenUrl: string;
+    server?: string;
+    wsUrl?: string;
+  }) => {
+    const response = await api.xyzw.fetchToken({
+      name: payload.name,
+      tokenUrl: payload.tokenUrl,
+      server: payload.server,
+      wsUrl: payload.wsUrl,
+    });
+
+    if (!response?.success || !response.data?.token) {
+      throw new Error(response?.message || "接口返回数据中未找到token字段");
+    }
+
+    return {
+      name: payload.name,
+      token: response.data.token,
+      server: response.data.server || payload.server || "未知",
+      wsUrl: response.data.wsUrl || payload.wsUrl || "",
+      sourceUrl: payload.tokenUrl,
+      importMethod: "api" as const,
+    };
+  };
+
+  const addTokenAndConnect = async (
+    tokenData: TokenData,
+    autoConnect = true,
+  ) => {
+    const newToken = addToken(tokenData);
+    if (autoConnect) {
+      await createWebSocketConnection(
+        newToken.id,
+        newToken.token,
+        newToken.wsUrl,
+      );
+    }
+    return newToken;
   };
 
   // 连接管理辅助函数
@@ -933,6 +979,21 @@ export const useTokenStore = defineStore("tokens", () => {
     }
   };
 
+  const restartBottleHelper = async (
+    tokenId: string,
+    bottleType: number = -1,
+  ) => {
+    const status = getWebSocketStatus(tokenId);
+    if (status !== "connected") {
+      throw new Error("WebSocket未连接");
+    }
+
+    sendMessage(tokenId, "bottlehelper_stop", { bottleType });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    sendMessage(tokenId, "bottlehelper_start", { bottleType });
+    sendMessage(tokenId, "role_getroleinfo");
+  };
+
   // 发送获取数据版本请求
   const sendGetDataBundleVersion = (tokenId: string, params = {}) => {
     return sendMessageWithPromise(tokenId, "system_getdatabundlever", params);
@@ -1325,6 +1386,8 @@ export const useTokenStore = defineStore("tokens", () => {
     // Base64解析方法
     parseBase64Token,
     importBase64Token,
+    fetchTokenFromApi,
+    addTokenAndConnect,
 
     // WebSocket方法
     createWebSocketConnection,
@@ -1341,6 +1404,7 @@ export const useTokenStore = defineStore("tokens", () => {
     sendSignIn,
     sendClaimDailyReward,
     sendGetTeamInfo,
+    restartBottleHelper,
     sendGameMessage,
 
 

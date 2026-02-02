@@ -92,12 +92,14 @@ const handleBottleHelper = () => {
     return;
   }
   const tokenId = tokenStore.selectedToken.id;
-  tokenStore.sendMessage(tokenId, "bottlehelper_stop");
-  setTimeout(() => {
-    tokenStore.sendMessage(tokenId, "bottlehelper_start");
-    tokenStore.sendMessage(tokenId, "role_getroleinfo");
-  }, 500);
-  message.info(state.value.isRunning ? "重启盐罐机器人" : "启动盐罐机器人");
+  tokenStore
+    .restartBottleHelper(tokenId, 0)
+    .then(() => {
+      message.info(state.value.isRunning ? "重启盐罐机器人" : "启动盐罐机器人");
+    })
+    .catch((error) => {
+      message.error(error?.message || "WebSocket未连接，无法执行操作");
+    });
 };
 </script>
 
