@@ -1,21 +1,18 @@
 ﻿<template>
-  <div class="card">
+  <div class="dashboard-page">
+    <button v-if="authUser" class="logout-fab" type="button" @click="handleLogout">
+      退出登录
+    </button>
+    <div class="card">
     <div class="header">
       <div>
         <h1>XYZW WebSocket 控制台</h1>
-        <p>仅保留 WebSocket 连接与罐子功能，用于对接后端接口。</p>
-      </div>
-      <div class="user-box" v-if="authUser">
-        <span class="user-name">{{ authUser.username }}</span>
-        <button class="ghost" @click="handleLogout">退出登录</button>
+        <p v-if="authUser">欢迎，{{ authUser.username }}，进入系统控制台。</p>
+        <p v-else>仅保留 WebSocket 连接与罐子功能，用于对接后端接口。</p>
       </div>
     </div>
 
     <div class="grid">
-      <label class="field">
-        操作验证密码
-        <input v-model="verifyPassword" type="password" placeholder="输入登录密码以解锁操作" />
-      </label>
       <label class="field">
         账号名称
         <input v-model="form.name" placeholder="例如：主号" />
@@ -35,12 +32,7 @@
     </div>
 
     <div class="actions">
-      <button class="ghost" :disabled="loading" @click="handleVerifyPassword">
-        验证密码
-      </button>
-      <button :disabled="loading" @click="handleFetchToken">
-        获取 Token
-      </button>
+      <button :disabled="loading" @click="handleFetchToken">获取 Token</button>
       <button
         class="secondary"
         :disabled="!token || loading"
@@ -48,7 +40,11 @@
       >
         建立 WebSocket
       </button>
-      <button class="ghost" :disabled="status !== 'connected'" @click="handleDisconnect">
+      <button
+        class="ghost"
+        :disabled="status !== 'connected'"
+        @click="handleDisconnect"
+      >
         断开连接
       </button>
       <button
@@ -71,6 +67,7 @@
       <p v-if="logs.length === 0">暂无日志</p>
     </div>
   </div>
+  </div>
 </template>
 
 <script setup>
@@ -89,7 +86,7 @@ const authToken = ref(localStorage.getItem("authToken") || "");
 const authUser = ref(
   localStorage.getItem("authUser")
     ? JSON.parse(localStorage.getItem("authUser"))
-    : null,
+    : null
 );
 const authValidated = ref(!!authUser.value);
 
@@ -98,8 +95,6 @@ const binFile = ref(null);
 const loading = ref(false);
 const status = ref("disconnected");
 const logs = ref([]);
-const verifyPassword = ref("");
-const verifiedUntil = ref(0);
 
 const addLog = (message) => {
   logs.value.unshift(`[${new Date().toLocaleTimeString()}] ${message}`);
@@ -151,9 +146,7 @@ const decodeTokenFromBase64 = (encoded) => {
 };
 
 const authHeaders = () =>
-  authToken.value
-    ? { Authorization: `Bearer ${authToken.value}` }
-    : {};
+  authToken.value ? { Authorization: `Bearer ${authToken.value}` } : {};
 
 const ensureAuth = async () => {
   if (!authToken.value) {
@@ -188,40 +181,6 @@ const ensureAuth = async () => {
   }
 };
 
-const ensurePasswordVerified = async () => {
-  if (!(await ensureAuth())) return false;
-  if (verifiedUntil.value && Date.now() < verifiedUntil.value) return true;
-  addLog("请先验证登录密码。");
-  return false;
-};
-
-const handleVerifyPassword = async () => {
-  if (!authUser.value?.username || !verifyPassword.value) {
-    addLog("请输入登录密码进行验证。");
-    return;
-  }
-  try {
-    const response = await fetch("/api/v1/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        username: authUser.value.username,
-        password: verifyPassword.value,
-      }),
-    });
-    const payload = await response.json();
-    if (!response.ok || !payload.success || !payload.data?.token) {
-      throw new Error(payload.message || "密码验证失败");
-    }
-    authToken.value = payload.data.token;
-    localStorage.setItem("authToken", authToken.value);
-    verifiedUntil.value = Date.now() + 5 * 60 * 1000;
-    addLog("密码验证成功，5分钟内可执行操作。");
-  } catch (error) {
-    addLog(`密码验证失败: ${error.message}`);
-  }
-};
-
 const handleLogout = async () => {
   try {
     if (authToken.value) {
@@ -236,7 +195,6 @@ const handleLogout = async () => {
   authToken.value = "";
   authUser.value = null;
   authValidated.value = false;
-  verifiedUntil.value = 0;
   localStorage.removeItem("authToken");
   localStorage.removeItem("authUser");
   router.push("/login");
@@ -248,7 +206,7 @@ const handleFileChange = (event) => {
 };
 
 const handleFetchToken = async () => {
-  if (!(await ensurePasswordVerified())) return;
+  if (!(await ensureAuth())) return;
   if (!form.name || !binFile.value) {
     addLog("请填写账号名称并选择 bin 文件。");
     return;
@@ -284,12 +242,12 @@ const handleFetchToken = async () => {
 const buildWsUrl = () => {
   if (form.wsUrl) return form.wsUrl;
   return `wss://xxz-xyzw.hortorgames.com/agent?p=${encodeURIComponent(
-    token.value,
+    token.value
   )}&e=x&lang=chinese`;
 };
 
 const handleConnect = async () => {
-  if (!(await ensurePasswordVerified())) return;
+  if (!(await ensureAuth())) return;
   if (!token.value) {
     addLog("请先获取 token。");
     return;
@@ -315,7 +273,7 @@ const handleConnect = async () => {
 };
 
 const handleDisconnect = async () => {
-  if (!(await ensurePasswordVerified())) return;
+  if (!(await ensureAuth())) return;
   if (!token.value) {
     addLog("请先获取 token。");
     return;
@@ -339,7 +297,7 @@ const handleDisconnect = async () => {
 };
 
 const handleBottleHelper = async () => {
-  if (!(await ensurePasswordVerified())) return;
+  if (!(await ensureAuth())) return;
   if (status.value !== "connected") {
     addLog("WebSocket 未连接，无法操作罐子。");
     return;
@@ -365,7 +323,7 @@ const refreshStatus = async () => {
   try {
     const response = await fetch(
       `/api/v1/xyzw/ws/status?token=${encodeURIComponent(token.value)}`,
-      { headers: { ...authHeaders() } },
+      { headers: { ...authHeaders() } }
     );
     const payload = await response.json();
     if (response.ok && payload.success && payload.data?.status) {
@@ -382,18 +340,56 @@ onMounted(() => {
   ensureAuth();
 });
 
-onBeforeUnmount(() => clearInterval(statusTimer));
+onBeforeUnmount(() => {
+  clearInterval(statusTimer);
+});
 </script>
 
 <style scoped>
 .card {
   max-width: 980px;
   margin: 30px auto;
-  background: rgba(15, 23, 42, 0.92);
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(15, 23, 42, 0.88);
+  border: 1px solid rgba(148, 163, 184, 0.25);
   border-radius: 18px;
   padding: 24px;
-  box-shadow: 0 30px 60px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 30px 60px rgba(15, 23, 42, 0.35);
+  position: relative;
+  z-index: 1;
+}
+
+.dashboard-page {
+  min-height: 100dvh;
+  padding: 28px 20px 60px;
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(420px 320px at 12% 12%, rgba(125, 211, 252, 0.45), transparent 70%),
+    radial-gradient(520px 360px at 88% 8%, rgba(199, 210, 254, 0.5), transparent 70%),
+    radial-gradient(640px 420px at 70% 80%, rgba(224, 231, 255, 0.6), transparent 70%),
+    linear-gradient(140deg, #f8fafc 0%, #eef2ff 45%, #f1f5f9 100%);
+  color: #0f172a;
+}
+
+.dashboard-page::before,
+.dashboard-page::after {
+  content: "";
+  position: absolute;
+  inset: -20%;
+  background-image:
+    radial-gradient(circle, rgba(59, 130, 246, 0.25) 0 2px, transparent 3px),
+    radial-gradient(circle, rgba(14, 116, 144, 0.2) 0 1.5px, transparent 3px),
+    radial-gradient(circle, rgba(99, 102, 241, 0.18) 0 2px, transparent 3px);
+  background-size: 160px 160px, 260px 260px, 200px 200px;
+  background-position: 0 0, 80px 40px, 120px 120px;
+  opacity: 0.45;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.dashboard-page::after {
+  opacity: 0.28;
+  background-position: 40px 120px, 120px 20px, 200px 160px;
 }
 
 .header {
@@ -422,6 +418,23 @@ onBeforeUnmount(() => clearInterval(statusTimer));
   padding: 6px 12px;
   border-radius: 8px;
   cursor: pointer;
+}
+
+.logout-fab {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 50;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.78);
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  color: #e2e8f0;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
 }
 
 .grid {

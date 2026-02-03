@@ -9,7 +9,6 @@
 <style scoped>
 .app-shell {
   min-height: 100dvh;
-  background: #0f172a;
   color: #e2e8f0;
 }
 </style>

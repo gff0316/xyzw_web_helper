@@ -42,6 +42,8 @@
         </button>
       </form>
 
+      <div v-if="notice" class="notice">{{ notice }}</div>
+
       <div class="footer">
         <button class="link" @click="router.push('/register')">立即注册</button>
       </div>
@@ -63,6 +65,7 @@ const form = reactive({
   captchaQuestion: "",
 });
 const loading = ref(false);
+const notice = ref("");
 
 const loadCaptcha = async () => {
   try {
@@ -80,11 +83,11 @@ const loadCaptcha = async () => {
 
 const handleLogin = async () => {
   if (!form.username || !form.password) {
-    alert("请输入用户名和密码。");
+    notice.value = "请输入用户名和密码。";
     return;
   }
   if (!form.captchaId || !form.captchaAnswer) {
-    alert("请完成验证码。");
+    notice.value = "请完成验证码。";
     return;
   }
   loading.value = true;
@@ -113,17 +116,24 @@ const handleLogin = async () => {
         email: data.data.email,
       }),
     );
-    alert("登录成功，正在跳转...");
+    notice.value = `欢迎回来，${data.data.username}`;
     router.push("/dashboard");
   } catch (error) {
-    alert(`登录失败: ${error.message}`);
+    const raw = String(error.message || "").toLowerCase();
+    if (raw.includes("invalid credentials") || raw.includes("账号") || raw.includes("密码")) {
+      notice.value = "账号或密码不正确，请重试。";
+    } else if (raw.includes("captcha") || raw.includes("验证码")) {
+      notice.value = "验证码不正确，请重新输入。";
+    } else {
+      notice.value = "登录失败，请稍后再试。";
+    }
   } finally {
     loading.value = false;
   }
 };
 
 const handleForgot = () => {
-  alert("找回密码功能暂未开放。");
+  notice.value = "找回密码功能暂未开放。";
 };
 
 loadCaptcha();
@@ -341,6 +351,16 @@ loadCaptcha();
 .primary:hover {
   transform: translateY(-1px);
   box-shadow: 0 14px 30px rgba(56, 189, 248, 0.35);
+}
+
+.notice {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(2, 6, 23, 0.6);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  color: #e2e8f0;
+  font-size: 12px;
 }
 
 .footer {

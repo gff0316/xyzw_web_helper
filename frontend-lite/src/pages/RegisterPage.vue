@@ -34,6 +34,8 @@
         </button>
       </form>
 
+      <div v-if="notice" class="notice">{{ notice }}</div>
+
       <div class="footer">
         <button class="link" @click="router.push('/login')">返回登录</button>
       </div>
@@ -55,6 +57,7 @@ const form = reactive({
   captchaQuestion: "",
 });
 const loading = ref(false);
+const notice = ref("");
 
 const loadCaptcha = async () => {
   try {
@@ -72,11 +75,11 @@ const loadCaptcha = async () => {
 
 const handleRegister = async () => {
   if (!form.username || !form.email || !form.password) {
-    alert("请填写用户名、邮箱和密码。");
+    notice.value = "请填写用户名、邮箱和密码。";
     return;
   }
   if (!form.captchaId || !form.captchaAnswer) {
-    alert("请完成验证码。");
+    notice.value = "请完成验证码。";
     return;
   }
   loading.value = true;
@@ -97,10 +100,19 @@ const handleRegister = async () => {
       await loadCaptcha();
       throw new Error(data.message || "注册失败");
     }
-    alert("注册成功，即将跳转登录...");
+    notice.value = "注册成功，即将跳转登录...";
     setTimeout(() => router.push("/login"), 800);
   } catch (error) {
-    alert(`注册失败: ${error.message}`);
+    const raw = String(error.message || "").toLowerCase();
+    if (raw.includes("username") || raw.includes("用户名")) {
+      notice.value = "用户名已存在，请更换后再试。";
+    } else if (raw.includes("email") || raw.includes("邮箱")) {
+      notice.value = "邮箱已被使用，请更换后再试。";
+    } else if (raw.includes("captcha") || raw.includes("验证码")) {
+      notice.value = "验证码不正确，请重新输入。";
+    } else {
+      notice.value = "注册失败，请稍后再试。";
+    }
   } finally {
     loading.value = false;
   }
@@ -284,6 +296,16 @@ loadCaptcha();
 .primary:hover {
   transform: translateY(-1px);
   box-shadow: 0 14px 30px rgba(56, 189, 248, 0.35);
+}
+
+.notice {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(2, 6, 23, 0.6);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  color: #e2e8f0;
+  font-size: 12px;
 }
 
 .footer {
