@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.xyzw.webhelper.auth.AuthUserMapper">
+  <resultMap id="AuthUserResult" type="com.xyzw.webhelper.auth.AuthUser">
+    <id column="id" property="id" />
+    <result column="username" property="username" />
+    <result column="email" property="email" />
+    <result column="password_hash" property="passwordHash" />
+    <result column="token" property="token" />
+    <result column="created_at" property="createdAt" />
+    <result column="updated_at" property="updatedAt" />
+  </resultMap>
+
+  <select id="findByUsername" resultMap="AuthUserResult">
+    SELECT * FROM users WHERE username = #{username} LIMIT 1
+  </select>
+
+  <select id="findByEmail" resultMap="AuthUserResult">
+    SELECT * FROM users WHERE email = #{email} LIMIT 1
+  </select>
+
+  <select id="findByToken" resultMap="AuthUserResult">
+    SELECT * FROM users WHERE token = #{token} LIMIT 1
+  </select>
+
+  <insert id="insert" parameterType="com.xyzw.webhelper.auth.AuthUser" useGeneratedKeys="true" keyProperty="id">
+    INSERT INTO users (username, email, password_hash, token, created_at, updated_at)
+    VALUES (#{username}, #{email}, #{passwordHash}, #{token}, #{createdAt}, #{updatedAt})
+  </insert>
+
+  <update id="updateToken">
+    UPDATE users
+    SET token = #{token}, updated_at = #{updatedAt}
+    WHERE id = #{id}
+  </update>
+</mapper>
