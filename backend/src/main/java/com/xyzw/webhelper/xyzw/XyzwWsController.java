@@ -3,6 +3,8 @@ package com.xyzw.webhelper.xyzw;
 import com.xyzw.webhelper.xyzw.dto.XyzwBottleRequest;
 import com.xyzw.webhelper.xyzw.dto.XyzwWsConnectRequest;
 import com.xyzw.webhelper.xyzw.ws.XyzwWsManager;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -17,6 +19,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1/xyzw/ws")
 public class XyzwWsController {
+    private static final Logger logger = LoggerFactory.getLogger(XyzwWsController.class);
     private final XyzwWsManager wsManager;
 
     public XyzwWsController(XyzwWsManager wsManager) {
@@ -59,6 +62,16 @@ public class XyzwWsController {
             return ResponseEntity.badRequest().body(build(false, "token is required", null));
         }
         int bottleType = request.getBottleType() == null ? 0 : request.getBottleType();
+        if (!wsManager.isConnected(token)) {
+            String wsUrl = buildDefaultWsUrl(token);
+            logger.info("Restart bottle requested, connect websocket first. bottleType={}, wsUrl={}", bottleType, wsUrl);
+            wsManager.connect(token, wsUrl);
+            if (!waitForConnection(token, 3000)) {
+                logger.warn("Restart bottle failed: websocket connect timeout. bottleType={}, wsUrl={}", bottleType, wsUrl);
+                return ResponseEntity.badRequest().body(build(false, "websocket connect failed", null));
+            }
+        }
+        logger.info("Restart bottle: websocket connected, sending restart. bottleType={}", bottleType);
         wsManager.sendBottleHelperRestart(token, bottleType);
         return ResponseEntity.ok(build(true, "success", null));
     }
@@ -89,5 +102,21 @@ public class XyzwWsController {
             payload.put("data", data);
         }
         return payload;
+    }
+
+    private boolean waitForConnection(String token, long timeoutMs) {
+        long start = System.currentTimeMillis();
+        while (System.currentTimeMillis() - start < timeoutMs) {
+            if (wsManager.isConnected(token)) {
+                return true;
+            }
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return false;
     }
 }

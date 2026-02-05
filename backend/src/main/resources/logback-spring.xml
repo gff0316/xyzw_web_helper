@@ -20,6 +20,9 @@
     </appender>
 
     <logger name="com.xyzw.webhelper" level="DEBUG" />
+    <logger name="org.apache.ibatis" level="DEBUG" />
+    <logger name="org.mybatis" level="DEBUG" />
+    <logger name="org.mybatis.spring" level="DEBUG" />
 
     <root level="INFO">
         <appender-ref ref="CONSOLE" />

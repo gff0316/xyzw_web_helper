@@ -1,10 +1,12 @@
 import { createRouter, createWebHistory } from "vue-router";
 import LoginPage from "../pages/LoginPage.vue";
 import RegisterPage from "../pages/RegisterPage.vue";
-import DashboardPage from "../pages/DashboardPage.vue";
+import ProfilePage from "../pages/DashboardPage.vue";
+import GamePage from "../pages/GamePage.vue";
+import UploadBinPage from "../pages/UploadBinPage.vue";
 
 const routes = [
-  { path: "/", redirect: "/dashboard" },
+  { path: "/", redirect: "/profile" },
   {
     path: "/login",
     name: "Login",
@@ -18,9 +20,21 @@ const routes = [
     meta: { requiresAuth: false },
   },
   {
-    path: "/dashboard",
-    name: "Dashboard",
-    component: DashboardPage,
+    path: "/profile",
+    name: "Profile",
+    component: ProfilePage,
+    meta: { requiresAuth: true },
+  },
+  {
+    path: "/upload-bin",
+    name: "UploadBin",
+    component: UploadBinPage,
+    meta: { requiresAuth: true },
+  },
+  {
+    path: "/game/:tokenId?",
+    name: "Game",
+    component: GamePage,
     meta: { requiresAuth: true },
   },
 ];
@@ -37,7 +51,7 @@ router.beforeEach((to, from, next) => {
     return;
   }
   if (to.path === "/login" && token) {
-    next("/dashboard");
+    next("/profile");
     return;
   }
   next();

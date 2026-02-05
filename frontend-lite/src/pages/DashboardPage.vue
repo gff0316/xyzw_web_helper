@@ -1,159 +1,117 @@
-﻿<template>
+<template>
   <div class="dashboard-page">
     <button v-if="authUser" class="logout-fab" type="button" @click="handleLogout">
       退出登录
     </button>
-    <div class="card">
-    <div class="header">
-      <div>
-        <h1>XYZW WebSocket 控制台</h1>
-        <p v-if="authUser">欢迎，{{ authUser.username }}，进入系统控制台。</p>
-        <p v-else>仅保留 WebSocket 连接与罐子功能，用于对接后端接口。</p>
+    <div class="content">
+      <div class="header">
+        <div>
+          <h1>个人信息管理</h1>
+          <p v-if="authUser">欢迎，{{ authUser.username }}，在这里维护你的 Bin 和 Token。</p>
+          <p v-else>请先登录。</p>
+        </div>
+        <div class="header-actions">
+          <button class="ghost" type="button" @click="router.push('/game')">游戏功能</button>
+          <button class="ghost" type="button" @click="router.push('/upload-bin')">
+            上传 Bin
+          </button>
+        </div>
+      </div>
+      <p v-if="statusMessage" class="status-message" :class="{ error: statusIsError }">
+        {{ statusMessage }}
+      </p>
+
+      <div class="section">
+        <h2>我的 Bin</h2>
+        <div v-if="bins.length === 0" class="empty">暂无 Bin，请先上传。</div>
+        <div v-for="bin in bins" :key="bin.id" class="bin-card">
+          <div class="bin-header" @click="toggleBin(bin.id)">
+            <div class="bin-title">
+              <strong>{{ bin.name || '未命名账号' }}</strong>
+              <span class="bin-id">#{{ bin.id }}</span>
+            </div>
+            <div class="bin-header-actions" @click.stop>
+              <button class="ghost small" :disabled="loading" @click="handleCreateToken(bin.id)">
+                生成 Token
+              </button>
+              <button class="danger small" :disabled="loading" @click="handleDeleteBin(bin.id)">
+                删除 Bin
+              </button>
+              <span class="chevron" :class="{ open: isBinOpen(bin.id) }">▾</span>
+            </div>
+          </div>
+          <div v-if="isBinOpen(bin.id)" class="bin-body">
+            <div class="bin-meta">
+              <span v-if="bin.server">服务器：{{ bin.server }}</span>
+              <span v-if="bin.wsUrl">WS：{{ bin.wsUrl }}</span>
+              <span v-if="bin.fileName">文件：{{ bin.fileName }}</span>
+            </div>
+            <div class="token-list">
+              <div v-for="token in bin.tokens" :key="token.id" class="token-item">
+                <div>
+                  <div class="token-title">
+                    Token #{{ token.id }}
+                    <span v-if="token.regionName">· {{ token.regionName }}</span>
+                    <span v-if="token.roleName">· {{ token.roleName }}</span>
+                  </div>
+                  <div class="token-meta">{{ maskToken(token.token) }}</div>
+                  <div class="token-meta" v-if="token.server">????{{ token.server }}</div>
+                </div>
+                <div class="token-actions">
+                  <button class="secondary" @click="goGame(token.id)">进入游戏功能</button>
+                  <button class="danger" @click="handleDeleteToken(token.id)">删除</button>
+                </div>
+              </div>
+              <div v-if="!bin.tokens || bin.tokens.length === 0" class="empty">
+                还没有 Token，可以点击“生成 Token”。
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
-
-    <div class="grid">
-      <label class="field">
-        账号名称
-        <input v-model="form.name" placeholder="例如：主号" />
-      </label>
-      <label class="field">
-        Bin 文件
-        <input type="file" accept=".bin" @change="handleFileChange" />
-      </label>
-      <label class="field">
-        服务器名称（可选）
-        <input v-model="form.server" placeholder="S1-xxx" />
-      </label>
-      <label class="field">
-        自定义 WS 地址（可选）
-        <input v-model="form.wsUrl" placeholder="wss://..." />
-      </label>
-    </div>
-
-    <div class="actions">
-      <button :disabled="loading" @click="handleFetchToken">获取 Token</button>
-      <button
-        class="secondary"
-        :disabled="!token || loading"
-        @click="handleConnect"
-      >
-        建立 WebSocket
-      </button>
-      <button
-        class="ghost"
-        :disabled="status !== 'connected'"
-        @click="handleDisconnect"
-      >
-        断开连接
-      </button>
-      <button
-        class="secondary"
-        :disabled="status !== 'connected'"
-        @click="handleBottleHelper"
-      >
-        启动/重启罐子
-      </button>
-    </div>
-
-    <div class="status">
-      <strong>连接状态</strong>
-      <span :class="statusClass">{{ statusText }}</span>
-      <span v-if="token">Token: {{ maskedToken }}</span>
-    </div>
-
-    <div class="log">
-      <p v-for="(item, index) in logs" :key="index">{{ item }}</p>
-      <p v-if="logs.length === 0">暂无日志</p>
-    </div>
-  </div>
   </div>
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, reactive, ref, onMounted } from "vue";
+import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
-import { g_utils } from "../utils/bonProtocol.js";
 
 const router = useRouter();
-const form = reactive({
-  name: "",
-  server: "",
-  wsUrl: "",
-});
 
 const authToken = ref(localStorage.getItem("authToken") || "");
 const authUser = ref(
   localStorage.getItem("authUser")
     ? JSON.parse(localStorage.getItem("authUser"))
-    : null
+    : null,
 );
-const authValidated = ref(!!authUser.value);
 
-const token = ref("");
-const binFile = ref(null);
+const bins = ref([]);
 const loading = ref(false);
-const status = ref("disconnected");
 const logs = ref([]);
+const expandedBins = ref([]);
+const statusMessage = ref("");
+const statusIsError = ref(false);
 
 const addLog = (message) => {
   logs.value.unshift(`[${new Date().toLocaleTimeString()}] ${message}`);
 };
 
-const statusText = computed(() => {
-  switch (status.value) {
-    case "connected":
-      return "已连接";
-    case "connecting":
-      return "连接中";
-    case "error":
-      return "连接异常";
-    default:
-      return "未连接";
-  }
-});
-
-const statusClass = computed(() => ({
-  connected: status.value === "connected",
-  connecting: status.value === "connecting",
-  error: status.value === "error",
-}));
-
-const maskedToken = computed(() => {
-  if (!token.value) return "";
-  if (token.value.length <= 8) return token.value;
-  return `${token.value.slice(0, 6)}...${token.value.slice(-4)}`;
-});
-
-const decodeTokenFromBase64 = (encoded) => {
-  const binary = atob(encoded);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  const msg = g_utils.parse(bytes);
-  const data = msg.getData();
-  const currentTime = Date.now();
-  const sessId = currentTime * 100 + Math.floor(Math.random() * 100);
-  const connId = currentTime + Math.floor(Math.random() * 10);
-
-  return JSON.stringify({
-    ...data,
-    sessId,
-    connId,
-    isRestore: 0,
-  });
+const setStatus = (message, isError = false) => {
+  statusMessage.value = message;
+  statusIsError.value = isError;
 };
 
 const authHeaders = () =>
-  authToken.value ? { Authorization: `Bearer ${authToken.value}` } : {};
+  authToken.value
+    ? { Authorization: `Bearer ${authToken.value}` }
+    : {};
 
 const ensureAuth = async () => {
   if (!authToken.value) {
     router.push("/login");
     return false;
   }
-  if (authValidated.value) return true;
   try {
     const response = await fetch("/api/v1/auth/user", {
       headers: { ...authHeaders() },
@@ -162,23 +120,121 @@ const ensureAuth = async () => {
     if (!response.ok || !payload.success || !payload.data) {
       throw new Error(payload.message || "登录状态失效");
     }
-    authUser.value = {
-      id: payload.data.id,
-      username: payload.data.username,
-      email: payload.data.email,
-    };
-    localStorage.setItem("authUser", JSON.stringify(authUser.value));
-    authValidated.value = true;
+    authUser.value = payload.data;
+    localStorage.setItem("authUser", JSON.stringify(payload.data));
     return true;
   } catch (error) {
     authToken.value = "";
     authUser.value = null;
-    authValidated.value = false;
     localStorage.removeItem("authToken");
     localStorage.removeItem("authUser");
     router.push("/login");
     return false;
   }
+};
+
+const fetchBins = async () => {
+  if (!(await ensureAuth())) return;
+  try {
+    const response = await fetch("/api/v1/xyzw/bins", {
+      headers: { ...authHeaders() },
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.success) {
+      throw new Error(payload.message || "获取 Bin 失败");
+    }
+    bins.value = payload.data?.bins || [];
+    setStatus("Bin 列表已更新。", false);
+  } catch (error) {
+    setStatus(`获取 Bin 失败: ${error.message}`, true);
+  }
+};
+
+const handleCreateToken = async (binId) => {
+  if (!(await ensureAuth())) return;
+  loading.value = true;
+  try {
+    const response = await fetch(`/api/v1/xyzw/bins/${binId}/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ name: "", server: "" }),
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.success) {
+      throw new Error(payload.message || "生成 Token 失败");
+    }
+    setStatus(`已生成 Token #${payload.data?.id || ""}`, false);
+    await fetchBins();
+  } catch (error) {
+    setStatus(`生成 Token 失败: ${error.message}`, true);
+  } finally {
+    loading.value = false;
+  }
+};
+
+const toggleBin = (binId) => {
+  if (expandedBins.value.includes(binId)) {
+    expandedBins.value = expandedBins.value.filter((id) => id !== binId);
+  } else {
+    expandedBins.value = [...expandedBins.value, binId];
+  }
+};
+
+const isBinOpen = (binId) => expandedBins.value.includes(binId);
+
+const handleDeleteBin = async (binId) => {
+  if (!(await ensureAuth())) return;
+  if (!confirm("确定删除该 Bin 吗？对应 Token 会一并删除。")) return;
+  loading.value = true;
+  try {
+    const response = await fetch(`/api/v1/xyzw/bins/${binId}`, {
+      method: "DELETE",
+      headers: { ...authHeaders() },
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.success) {
+      throw new Error(payload.message || "删除 Bin 失败");
+    }
+    expandedBins.value = expandedBins.value.filter((id) => id !== binId);
+    setStatus("Bin 已删除。", false);
+    await fetchBins();
+  } catch (error) {
+    setStatus(`删除 Bin 失败: ${error.message}`, true);
+  } finally {
+    loading.value = false;
+  }
+};
+
+const handleDeleteToken = async (tokenId) => {
+  if (!(await ensureAuth())) return;
+  if (!confirm("确定删除该 Token 吗？")) return;
+  loading.value = true;
+  try {
+    const response = await fetch(`/api/v1/xyzw/tokens/${tokenId}`, {
+      method: "DELETE",
+      headers: { ...authHeaders() },
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.success) {
+      throw new Error(payload.message || "删除 Token 失败");
+    }
+    setStatus("Token 已删除。", false);
+    await fetchBins();
+  } catch (error) {
+    setStatus(`删除 Token 失败: ${error.message}`, true);
+  } finally {
+    loading.value = false;
+  }
+};
+
+const goGame = (tokenId) => {
+  router.push(`/game/${tokenId}`);
+};
+
+const maskToken = (token) => {
+  if (!token) return "";
+  if (token.length <= 10) return token;
+  return `${token.slice(0, 8)}...${token.slice(-6)}`;
 };
 
 const handleLogout = async () => {
@@ -194,173 +250,20 @@ const handleLogout = async () => {
   }
   authToken.value = "";
   authUser.value = null;
-  authValidated.value = false;
   localStorage.removeItem("authToken");
   localStorage.removeItem("authUser");
   router.push("/login");
 };
 
-const handleFileChange = (event) => {
-  const file = event.target.files?.[0];
-  binFile.value = file || null;
-};
-
-const handleFetchToken = async () => {
-  if (!(await ensureAuth())) return;
-  if (!form.name || !binFile.value) {
-    addLog("请填写账号名称并选择 bin 文件。");
-    return;
-  }
-
-  loading.value = true;
-  try {
-    const formData = new FormData();
-    formData.append("file", binFile.value);
-    formData.append("name", form.name);
-    if (form.server) formData.append("server", form.server);
-    if (form.wsUrl) formData.append("wsUrl", form.wsUrl);
-
-    const response = await fetch("/api/v1/xyzw/token", {
-      method: "POST",
-      body: formData,
-    });
-
-    const payload = await response.json();
-    if (!response.ok || !payload.success || !payload.data?.token) {
-      throw new Error(payload.message || "获取 token 失败");
-    }
-
-    token.value = decodeTokenFromBase64(payload.data.token);
-    addLog(`已获取 token: ${maskedToken.value}`);
-  } catch (error) {
-    addLog(`获取 token 失败: ${error.message}`);
-  } finally {
-    loading.value = false;
-  }
-};
-
-const buildWsUrl = () => {
-  if (form.wsUrl) return form.wsUrl;
-  return `wss://xxz-xyzw.hortorgames.com/agent?p=${encodeURIComponent(
-    token.value
-  )}&e=x&lang=chinese`;
-};
-
-const handleConnect = async () => {
-  if (!(await ensureAuth())) return;
-  if (!token.value) {
-    addLog("请先获取 token。");
-    return;
-  }
-
-  status.value = "connecting";
-  const wsUrl = buildWsUrl();
-  try {
-    const response = await fetch("/api/v1/xyzw/ws/connect", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ token: token.value, wsUrl }),
-    });
-    const payload = await response.json();
-    if (!response.ok || !payload.success) {
-      throw new Error(payload.message || "建立 WebSocket 失败");
-    }
-    addLog(`已请求后端建立 WebSocket: ${wsUrl}`);
-  } catch (error) {
-    status.value = "error";
-    addLog(`建立 WebSocket 失败: ${error.message}`);
-  }
-};
-
-const handleDisconnect = async () => {
-  if (!(await ensureAuth())) return;
-  if (!token.value) {
-    addLog("请先获取 token。");
-    return;
-  }
-
-  try {
-    const response = await fetch("/api/v1/xyzw/ws/disconnect", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ token: token.value }),
-    });
-    const payload = await response.json();
-    if (!response.ok || !payload.success) {
-      throw new Error(payload.message || "断开失败");
-    }
-    status.value = "disconnected";
-    addLog("已通知后端断开 WebSocket。");
-  } catch (error) {
-    addLog(`断开失败: ${error.message}`);
-  }
-};
-
-const handleBottleHelper = async () => {
-  if (!(await ensureAuth())) return;
-  if (status.value !== "connected") {
-    addLog("WebSocket 未连接，无法操作罐子。");
-    return;
-  }
-  try {
-    const response = await fetch("/api/v1/xyzw/ws/bottlehelper/restart", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ token: token.value, bottleType: 0 }),
-    });
-    const payload = await response.json();
-    if (!response.ok || !payload.success) {
-      throw new Error(payload.message || "重启罐子失败");
-    }
-    addLog("已请求后端重启罐子。");
-  } catch (error) {
-    addLog(`重启罐子失败: ${error.message}`);
-  }
-};
-
-const refreshStatus = async () => {
-  if (!token.value || status.value !== "connected") return;
-  try {
-    const response = await fetch(
-      `/api/v1/xyzw/ws/status?token=${encodeURIComponent(token.value)}`,
-      { headers: { ...authHeaders() } }
-    );
-    const payload = await response.json();
-    if (response.ok && payload.success && payload.data?.status) {
-      status.value = payload.data.status;
-    }
-  } catch (error) {
-    // ignore
-  }
-};
-
-const statusTimer = setInterval(refreshStatus, 30000);
-
 onMounted(() => {
-  ensureAuth();
-});
-
-onBeforeUnmount(() => {
-  clearInterval(statusTimer);
+  fetchBins();
 });
 </script>
 
 <style scoped>
-.card {
-  max-width: 980px;
-  margin: 30px auto;
-  background: rgba(15, 23, 42, 0.88);
-  border: 1px solid rgba(148, 163, 184, 0.25);
-  border-radius: 18px;
-  padding: 24px;
-  box-shadow: 0 30px 60px rgba(15, 23, 42, 0.35);
-  position: relative;
-  z-index: 1;
-}
-
 .dashboard-page {
   min-height: 100dvh;
-  padding: 28px 20px 60px;
+  padding: 32px 22px 72px;
   position: relative;
   overflow: hidden;
   background:
@@ -369,6 +272,7 @@ onBeforeUnmount(() => {
     radial-gradient(640px 420px at 70% 80%, rgba(224, 231, 255, 0.6), transparent 70%),
     linear-gradient(140deg, #f8fafc 0%, #eef2ff 45%, #f1f5f9 100%);
   color: #0f172a;
+  font-family: "Manrope", "Noto Sans SC", "PingFang SC", sans-serif;
 }
 
 .dashboard-page::before,
@@ -392,32 +296,46 @@ onBeforeUnmount(() => {
   background-position: 40px 120px, 120px 20px, 200px 160px;
 }
 
+.content {
+  max-width: 1100px;
+  margin: 0 auto;
+  position: relative;
+  z-index: 1;
+}
+
 .header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 18px;
 }
 
-.user-box {
+.header-actions {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
-.user-name {
-  font-weight: 600;
-  color: #e2e8f0;
+.section {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(148, 163, 184, 0.4);
+}
+
+.section h2 {
+  margin: 0 0 12px;
+  font-size: 16px;
+  color: #0f172a;
 }
 
 .ghost {
-  background: transparent;
-  color: #e2e8f0;
-  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: rgba(255, 255, 255, 0.2);
+  color: #0f172a;
+  border: 1px solid rgba(148, 163, 184, 0.6);
   padding: 6px 12px;
   border-radius: 8px;
   cursor: pointer;
+  backdrop-filter: blur(8px);
 }
 
 .logout-fab {
@@ -430,7 +348,7 @@ onBeforeUnmount(() => {
   gap: 8px;
   padding: 8px 14px;
   border-radius: 999px;
-  background: rgba(15, 23, 42, 0.78);
+  background: rgba(15, 23, 42, 0.82);
   border: 1px solid rgba(148, 163, 184, 0.4);
   color: #e2e8f0;
   cursor: pointer;
@@ -447,22 +365,23 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 6px;
   font-size: 13px;
-  color: #94a3b8;
+  color: rgba(15, 23, 42, 0.72);
 }
 
 .field input {
   padding: 8px 10px;
   border-radius: 8px;
-  border: 1px solid rgba(148, 163, 184, 0.3);
-  background: rgba(2, 6, 23, 0.6);
-  color: #e2e8f0;
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  background: rgba(255, 255, 255, 0.75);
+  color: #0f172a;
 }
+
 
 .actions {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
-  margin: 16px 0;
+  margin: 12px 0 0;
 }
 
 .actions button {
@@ -470,31 +389,153 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   border: none;
   cursor: pointer;
-  background: #22d3ee;
-  color: #0f172a;
+  background: #0f172a;
+  color: #f8fafc;
   font-weight: 600;
 }
 
 .actions .secondary {
-  background: #38bdf8;
+  background: #1f2937;
 }
 
 .actions .ghost {
   background: transparent;
-  color: #e2e8f0;
-  border: 1px solid rgba(148, 163, 184, 0.4);
+  color: #0f172a;
+  border: 1px solid rgba(148, 163, 184, 0.6);
 }
 
-.status {
-  margin-bottom: 12px;
-  color: #cbd5f5;
+.bin-card {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
 }
 
-.log {
-  background: rgba(2, 6, 23, 0.6);
+.bin-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.bin-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bin-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bin-id {
+  margin-left: 8px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.bin-body {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(148, 163, 184, 0.3);
+}
+
+.bin-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #475569;
+}
+
+.token-list {
+  margin-top: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.token-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
   border-radius: 10px;
-  padding: 12px;
-  min-height: 70px;
+  background: rgba(248, 250, 252, 0.85);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+}
+
+.token-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.token-title {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+
+.token-meta {
+  font-size: 12px;
+  color: #64748b;
+  margin-top: 4px;
+}
+
+.empty {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.status-message {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #0f172a;
+}
+
+.status-message.error {
+  color: #b91c1c;
+}
+
+.small {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+.danger {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  color: #b91c1c;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  color: #475569;
+  transform: rotate(0deg);
+  transition: transform 0.15s ease;
+  font-size: 12px;
+}
+
+.chevron.open {
+  transform: rotate(180deg);
 }
 
 @media (max-width: 720px) {
@@ -503,6 +544,11 @@ onBeforeUnmount(() => {
   }
 
   .header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .token-item {
     flex-direction: column;
     align-items: flex-start;
   }

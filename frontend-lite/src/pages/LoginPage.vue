@@ -117,7 +117,7 @@ const handleLogin = async () => {
       }),
     );
     notice.value = `欢迎回来，${data.data.username}`;
-    router.push("/dashboard");
+    router.push("/profile");
   } catch (error) {
     const raw = String(error.message || "").toLowerCase();
     if (raw.includes("invalid credentials") || raw.includes("账号") || raw.includes("密码")) {
