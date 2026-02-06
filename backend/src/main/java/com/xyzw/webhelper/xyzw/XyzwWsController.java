@@ -67,7 +67,7 @@ public class XyzwWsController {
             logger.info("Restart bottle requested, connect websocket first. bottleType={}, wsUrl={}", bottleType, wsUrl);
             wsManager.connect(token, wsUrl);
             if (!waitForConnection(token, 3000)) {
-                logger.warn("Restart bottle failed: websocket connect timeout. bottleType={}, wsUrl={}", bottleType, wsUrl);
+                logger.warn("Restart bottle failed: wegenbsocket connect timeout. bottleType={}, wsUrl={}", bottleType, wsUrl);
                 return ResponseEntity.badRequest().body(build(false, "websocket connect failed", null));
             }
         }

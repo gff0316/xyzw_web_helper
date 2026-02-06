@@ -4,6 +4,7 @@ import RegisterPage from "../pages/RegisterPage.vue";
 import ProfilePage from "../pages/DashboardPage.vue";
 import GamePage from "../pages/GamePage.vue";
 import UploadBinPage from "../pages/UploadBinPage.vue";
+import WxLoginPage from "../pages/WxLoginPage.vue";
 
 const routes = [
   { path: "/", redirect: "/profile" },
@@ -29,6 +30,12 @@ const routes = [
     path: "/upload-bin",
     name: "UploadBin",
     component: UploadBinPage,
+    meta: { requiresAuth: true },
+  },
+  {
+    path: "/wx-login",
+    name: "WxLogin",
+    component: WxLoginPage,
     meta: { requiresAuth: true },
   },
   {

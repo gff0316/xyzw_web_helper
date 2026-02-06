@@ -9,7 +9,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@vicons/ionicons5": "^0.13.0",
     "lz4js": "^0.2.0",
+    "naive-ui": "^2.41.0",
     "vue": "^3.4.0",
     "vue-router": "^4.6.4"
   },
