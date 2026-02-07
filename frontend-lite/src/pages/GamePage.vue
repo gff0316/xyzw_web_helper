@@ -1,6 +1,11 @@
 ﻿<template>
   <div class="game-page">
-    <button v-if="authUser" class="logout-fab" type="button" @click="handleLogout">
+    <button
+      v-if="authUser"
+      class="logout-fab"
+      type="button"
+      @click="handleLogout"
+    >
       退出登录
     </button>
 
@@ -22,21 +27,80 @@
         />
       </div>
 
-      <div class="card">
-        <div class="card-title">操作面板</div>
-        <div class="card-actions">
-          <button class="primary" :disabled="loading || !tokenRecord" @click="handleRestartBottle">
-            重启罐子
-          </button>
+      <div class="card helper-card">
+        <div class="card-header-line">
+          <div class="card-title with-icon">
+            <img
+              class="card-icon"
+              src="/icons/173746572831736.png"
+              alt="罐子助手"
+            />
+            罐子助手
+          </div>
         </div>
-        <p v-if="statusNote" class="status-note" :class="{ error: statusIsError }">
-          {{ statusNote }}
-        </p>
+        <div class="helper-body">
+          <div class="helper-meta">
+            <div class="helper-label">剩余时间</div>
+            <div class="helper-value">{{ formatTime(helperRemaining) }}</div>
+          </div>
+          <div class="helper-actions">
+            <button
+              class="primary"
+              :disabled="loading || !tokenRecord"
+              @click="handleRestartBottle"
+            >
+              重启罐子
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card hangup-card">
+        <div class="card-header-line">
+          <div class="card-title with-icon">
+            <img
+              class="card-icon"
+              src="/icons/174061875626614.png"
+              alt="挂机时间"
+            />
+            挂机时间
+          </div>
+          <span
+            class="pill"
+            :class="{ connected: hangupRunning, disconnected: !hangupRunning }"
+          >
+            {{ hangupRunning ? "运行中" : "已停" }}
+          </span>
+        </div>
+        <div class="helper-body">
+          <div class="helper-meta">
+            <div class="helper-label">剩余时间</div>
+            <div class="helper-value">{{ formatTime(hangupRemaining) }}</div>
+          </div>
+          <div class="helper-actions">
+            <button
+              class="primary"
+              :disabled="loading || !tokenRecord"
+              @click="handleExtendHangup"
+            >
+              加钟
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 
-    <div class="connection-status" :class="statusClass">
-      连接状态：{{ statusText }}
+    <div class="connection-actions-fixed">
+      <button
+        class="primary"
+        :disabled="loading || !tokenRecord"
+        @click="handleReconnect"
+      >
+        重新连接
+      </button>
+      <div class="connection-status" :class="statusClass">
+        连接状态：{{ statusText }}
+      </div>
     </div>
   </div>
 </template>
@@ -53,7 +117,7 @@ const authToken = ref(localStorage.getItem("authToken") || "");
 const authUser = ref(
   localStorage.getItem("authUser")
     ? JSON.parse(localStorage.getItem("authUser"))
-    : null,
+    : null
 );
 
 const tokenRecord = ref(null);
@@ -63,6 +127,10 @@ const loading = ref(false);
 const status = ref("disconnected");
 const statusNote = ref("");
 const statusIsError = ref(false);
+const helperRemaining = ref(0);
+const helperRunning = ref(false);
+const hangupRemaining = ref(0);
+const hangupRunning = ref(false);
 const roleInfo = ref(null);
 const roleLoading = ref(false);
 
@@ -86,9 +154,7 @@ const statusClass = computed(() => ({
 }));
 
 const authHeaders = () =>
-  authToken.value
-    ? { Authorization: `Bearer ${authToken.value}` }
-    : {};
+  authToken.value ? { Authorization: `Bearer ${authToken.value}` } : {};
 
 const ensureAuth = async () => {
   if (!authToken.value) {
@@ -150,7 +216,7 @@ const fetchTokenRecord = async () => {
     if (payload.data.bin) {
       tokenRecord.value.bin = payload.data.bin;
     }
-    setNote("Token 已加载，可进行操作。", false);
+    setNote("Token 已加载，可开始操作。", false);
     await loadRoleInfo(true);
   } catch (error) {
     setNote(`加载 Token 失败: ${error.message}`, true);
@@ -166,14 +232,31 @@ const loadRoleInfo = async (refresh = false) => {
   try {
     const tokenJsonValue = buildTokenJson();
     const response = await fetch(
-      `/api/v1/xyzw/ws/roleinfo?token=${encodeURIComponent(tokenJsonValue)}&refresh=${refresh}`,
-      { headers: { ...authHeaders() } },
+      `/api/v1/xyzw/ws/roleinfo?token=${encodeURIComponent(
+        tokenJsonValue
+      )}&refresh=${refresh}`,
+      { headers: { ...authHeaders() } }
     );
     const payload = await response.json();
     if (!response.ok || !payload.success) {
       throw new Error(payload.message || "获取身份牌失败");
     }
     roleInfo.value = payload.data?.roleInfo || null;
+    const stopTime =
+      payload.data?.roleInfo?.role?.bottleHelpers?.helperStopTime;
+    if (stopTime) {
+      const nowSec = Date.now() / 1000;
+      helperRemaining.value = Math.max(0, Math.floor(stopTime - nowSec));
+      helperRunning.value = helperRemaining.value > 0;
+    }
+    const hang = payload.data?.roleInfo?.role?.hangUp;
+    if (hang?.hangUpTime != null && hang?.lastTime != null) {
+      const nowSec = Date.now() / 1000;
+      const elapsed = nowSec - hang.lastTime;
+      const remain = Math.floor(hang.hangUpTime - elapsed);
+      hangupRemaining.value = Math.max(0, remain);
+      hangupRunning.value = hangupRemaining.value > 0;
+    }
     if (!roleInfo.value && refresh) {
       setNote("身份牌信息为空，可稍后重试。", true);
     }
@@ -207,19 +290,30 @@ const handleRestartBottle = async () => {
 
     await new Promise((resolve) => setTimeout(resolve, 800));
 
-    const restartResponse = await fetch("/api/v1/xyzw/ws/bottlehelper/restart", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ token: tokenJsonValue, bottleType: 0 }),
-    });
+    const restartResponse = await fetch(
+      "/api/v1/xyzw/ws/bottlehelper/restart",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ token: tokenJsonValue, bottleType: 0 }),
+      }
+    );
     const restartPayload = await restartResponse.json();
     if (!restartResponse.ok || !restartPayload.success) {
       throw new Error(restartPayload.message || "重启罐子失败");
     }
 
     status.value = "connected";
-    setNote("已请求后端重启罐子。", false);
     await loadRoleInfo(true);
+    if (helperRemaining.value > 0) {
+      setNote(
+        `已请求重启罐子，剩余时间 ${formatTime(helperRemaining.value)}`,
+        false
+      );
+    } else {
+      status.value = "error";
+      setNote("重启罐子可能失败：剩余时间为 0，建议重试。", true);
+    }
   } catch (error) {
     status.value = "error";
     setNote(`重启罐子失败: ${error.message}`, true);
@@ -252,7 +346,7 @@ const refreshStatus = async () => {
     const tokenJsonValue = buildTokenJson();
     const response = await fetch(
       `/api/v1/xyzw/ws/status?token=${encodeURIComponent(tokenJsonValue)}`,
-      { headers: { ...authHeaders() } },
+      { headers: { ...authHeaders() } }
     );
     const payload = await response.json();
     if (response.ok && payload.success && payload.data?.status) {
@@ -261,6 +355,75 @@ const refreshStatus = async () => {
   } catch (error) {
     // ignore
   }
+};
+
+const handleReconnect = async () => {
+  if (!(await ensureAuth())) return;
+  if (!tokenRecord.value?.token) {
+    setNote("请先加载 Token。", true);
+    return;
+  }
+  loading.value = true;
+  status.value = "connecting";
+  try {
+    const tokenJsonValue = buildTokenJson();
+    const resp = await fetch("/api/v1/xyzw/ws/connect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ token: tokenJsonValue }),
+    });
+    const payload = await resp.json();
+    if (!resp.ok || !payload.success) {
+      throw new Error(payload.message || "重连 WebSocket 失败");
+    }
+    status.value = "connected";
+    setNote("已重新建立 WebSocket。", false);
+    await loadRoleInfo(true);
+  } catch (error) {
+    status.value = "error";
+    setNote(`重连失败: ${error.message}`, true);
+  } finally {
+    loading.value = false;
+  }
+};
+
+const handleExtendHangup = async () => {
+  if (!(await ensureAuth())) return;
+  if (!tokenRecord.value?.token) {
+    setNote("请先加载 Token。", true);
+    return;
+  }
+  loading.value = true;
+  try {
+    const tokenJsonValue = buildTokenJson();
+    const resp = await fetch("/api/v1/xyzw/ws/hangup/extend", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ token: tokenJsonValue }),
+    });
+    const payload = await resp.json();
+    if (!resp.ok || !payload.success) {
+      throw new Error(payload.message || "挂机加钟失败");
+    }
+    setNote("已请求加钟，请稍后查看剩余时间。", false);
+    await loadRoleInfo(true);
+  } catch (error) {
+    setNote(`加钟失败: ${error.message}`, true);
+  } finally {
+    loading.value = false;
+  }
+};
+
+const formatTime = (seconds) => {
+  const total = Math.max(0, Math.floor(Number(seconds) || 0));
+  const h = Math.floor(total / 3600)
+    .toString()
+    .padStart(2, "0");
+  const m = Math.floor((total % 3600) / 60)
+    .toString()
+    .padStart(2, "0");
+  const s = (total % 60).toString().padStart(2, "0");
+  return `${h}:${m}:${s}`;
 };
 
 const statusTimer = setInterval(refreshStatus, 30000);
@@ -276,7 +439,23 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   clearInterval(statusTimer);
+  clearInterval(helperTimer);
+  clearInterval(hangupTimer);
 });
+
+const helperTimer = setInterval(() => {
+  if (helperRunning.value && helperRemaining.value > 0) {
+    helperRemaining.value = Math.max(0, helperRemaining.value - 1);
+    if (helperRemaining.value === 0) helperRunning.value = false;
+  }
+}, 1000);
+
+const hangupTimer = setInterval(() => {
+  if (hangupRunning.value && hangupRemaining.value > 0) {
+    hangupRemaining.value = Math.max(0, hangupRemaining.value - 1);
+    if (hangupRemaining.value === 0) hangupRunning.value = false;
+  }
+}, 1000);
 </script>
 
 <style scoped>
@@ -285,10 +464,21 @@ onBeforeUnmount(() => {
   padding: 32px 22px 88px;
   position: relative;
   overflow: hidden;
-  background:
-    radial-gradient(420px 320px at 12% 12%, rgba(125, 211, 252, 0.45), transparent 70%),
-    radial-gradient(520px 360px at 88% 8%, rgba(199, 210, 254, 0.5), transparent 70%),
-    radial-gradient(640px 420px at 70% 80%, rgba(224, 231, 255, 0.6), transparent 70%),
+  background: radial-gradient(
+      420px 320px at 12% 12%,
+      rgba(125, 211, 252, 0.45),
+      transparent 70%
+    ),
+    radial-gradient(
+      520px 360px at 88% 8%,
+      rgba(199, 210, 254, 0.5),
+      transparent 70%
+    ),
+    radial-gradient(
+      640px 420px at 70% 80%,
+      rgba(224, 231, 255, 0.6),
+      transparent 70%
+    ),
     linear-gradient(140deg, #f8fafc 0%, #eef2ff 45%, #f1f5f9 100%);
   color: #0f172a;
   font-family: "Manrope", "Noto Sans SC", "PingFang SC", sans-serif;
@@ -299,8 +489,11 @@ onBeforeUnmount(() => {
   content: "";
   position: absolute;
   inset: -20%;
-  background-image:
-    radial-gradient(circle, rgba(59, 130, 246, 0.25) 0 2px, transparent 3px),
+  background-image: radial-gradient(
+      circle,
+      rgba(59, 130, 246, 0.25) 0 2px,
+      transparent 3px
+    ),
     radial-gradient(circle, rgba(14, 116, 144, 0.2) 0 1.5px, transparent 3px),
     radial-gradient(circle, rgba(99, 102, 241, 0.18) 0 2px, transparent 3px);
   background-size: 160px 160px, 260px 260px, 200px 200px;
@@ -378,10 +571,74 @@ onBeforeUnmount(() => {
   margin-bottom: 12px;
 }
 
+.card-title.with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 0;
+}
+
+.card-icon {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
 .card-actions {
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.helper-card {
+  max-width: 520px;
+  margin-top: 8px;
+}
+
+.hangup-card {
+  max-width: 520px;
+  margin-top: 10px;
+}
+
+.card-header-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.helper-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.helper-meta {
+  flex: 1;
+}
+
+.helper-label {
+  font-size: 12px;
+  color: #64748b;
+  margin-bottom: 4px;
+}
+
+.helper-value {
+  font-size: 14px;
+  color: #0f172a;
+  min-height: 20px;
+}
+
+.helper-value.subtle,
+.helper-label.subtle {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.helper-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .primary {
@@ -389,7 +646,7 @@ onBeforeUnmount(() => {
   border-radius: 10px;
   border: none;
   cursor: pointer;
-  background: #0f172a;
+  background: linear-gradient(135deg, #b8c1cc, #8d99aa);
   color: #f8fafc;
   font-weight: 600;
 }
@@ -409,30 +666,46 @@ onBeforeUnmount(() => {
   color: #b91c1c;
 }
 
-.connection-status {
+.connection-actions-fixed {
   position: fixed;
   left: 50%;
   bottom: 24px;
   transform: translateX(-50%);
-  padding: 6px 14px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.8);
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.connection-actions-fixed .primary {
+  padding: 6px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  min-width: 130px;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.12);
+}
+
+.connection-status {
+  position: relative;
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.9);
   border: 1px solid rgba(148, 163, 184, 0.6);
   font-size: 12px;
   color: #334155;
-  z-index: 10;
+  min-width: 130px;
+  text-align: center;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
 }
-
 .connection-status.connected {
   color: #0f766e;
   border-color: rgba(13, 148, 136, 0.4);
 }
-
 .connection-status.connecting {
   color: #1d4ed8;
   border-color: rgba(59, 130, 246, 0.5);
 }
-
 .connection-status.error {
   color: #b91c1c;
   border-color: rgba(248, 113, 113, 0.5);
@@ -454,3 +727,10 @@ onBeforeUnmount(() => {
   width: 100%;
 }
 </style>
+
+
+
+
+
+
+

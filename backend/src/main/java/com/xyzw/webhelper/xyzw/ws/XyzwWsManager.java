@@ -1,4 +1,4 @@
-package com.xyzw.webhelper.xyzw.ws;
+﻿package com.xyzw.webhelper.xyzw.ws;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,7 +30,7 @@ public class XyzwWsManager {
             );
             clients.put(key, client);
             client.connect();
-            logger.info("WebSocket开始连接 token={}", key);
+            logger.info("WebSocket 开始连接 token={}", key);
         } catch (URISyntaxException ex) {
             logger.warn("WS 地址无效: {}", wsUrl, ex);
             throw new IllegalArgumentException("WS 地址无效");
@@ -48,7 +48,7 @@ public class XyzwWsManager {
             }
         }
         roleInfos.remove(key);
-        logger.info("WebSocket已断开 token={}", key);
+        logger.info("WebSocket 已断开 token={}", key);
     }
 
     public boolean isConnected(String key) {
@@ -76,6 +76,22 @@ public class XyzwWsManager {
         }
         logger.info("发送身份牌请求 token={}", key);
         client.sendCommand("role_getroleinfo", buildRoleInfoBody());
+    }
+
+    public void extendHangUp(String key) {
+        XyzwWsClient client = clients.get(key);
+        if (client == null || !client.isOpen()) {
+            throw new IllegalStateException("WebSocket 未连接");
+        }
+        Map<String, Object> body = new java.util.LinkedHashMap<String, Object>();
+        body.put("isSkipShareCard", true);
+        body.put("type", 2);
+        logger.info("挂机加钟 token={}", key);
+        for (int i = 0; i < 4; i++) {
+            client.sendCommand("system_mysharecallback", body);
+        }
+        scheduler.schedule(() -> client.sendCommand("role_getroleinfo", buildRoleInfoBody()),
+            1200, java.util.concurrent.TimeUnit.MILLISECONDS);
     }
 
     public Map<String, Object> getRoleInfo(String key) {
@@ -120,9 +136,9 @@ public class XyzwWsManager {
             @SuppressWarnings("unchecked")
             Map<String, Object> roleInfo = (Map<String, Object>) body;
             roleInfos.put(key, roleInfo);
-            logger.info("已接收身份牌信息 token={}", key);
+            logger.info("宸叉帴鏀惰韩浠界墝淇℃伅 token={}", key);
         } else if (cmd != null && !cmd.isEmpty()) {
-            logger.debug("收到 WebSocket 指令 cmd={} token={}", cmd, key);
+            logger.debug("鏀跺埌 WebSocket 鎸囦护 cmd={} token={}", cmd, key);
         }
     }
 }
