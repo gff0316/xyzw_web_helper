@@ -2,6 +2,8 @@ package com.xyzw.webhelper.xyzw.ws;
 
 
 import net.jpountz.lz4.LZ4FrameInputStream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -9,6 +11,7 @@ import java.io.IOException;
 import java.util.Random;
 
 final class Crypto {
+    private static final Logger logger = LoggerFactory.getLogger(Crypto.class);
     private static final int HEADER_P = 112; // 'p'
     private static final int HEADER_L = 108; // 'l'
     private static final int HEADER_X = 120; // 'x'
@@ -67,15 +70,17 @@ final class Crypto {
     }
 
     private byte[] decryptX(byte[] input) {
+        int b2 = input[2] & 0xff;
+        int b3 = input[3] & 0xff;
         int t =
-            (((input[2] >> 6) & 1) << 7)
-                | (((input[2] >> 4) & 1) << 6)
-                | (((input[2] >> 2) & 1) << 5)
-                | ((input[2] & 1) << 4)
-                | (((input[3] >> 6) & 1) << 3)
-                | (((input[3] >> 4) & 1) << 2)
-                | (((input[3] >> 2) & 1) << 1)
-                | (input[3] & 1);
+            (((b2 >> 6) & 1) << 7)
+                | (((b2 >> 4) & 1) << 6)
+                | (((b2 >> 2) & 1) << 5)
+                | ((b2 & 1) << 4)
+                | (((b3 >> 6) & 1) << 3)
+                | (((b3 >> 4) & 1) << 2)
+                | (((b3 >> 2) & 1) << 1)
+                | (b3 & 1);
         byte[] out = input.clone();
         for (int i = out.length - 1; i >= 4; i--) {
             out[i] ^= (byte) t;
@@ -86,15 +91,17 @@ final class Crypto {
     }
 
     private byte[] decryptLx(byte[] input) {
+        int b2 = input[2] & 0xff;
+        int b3 = input[3] & 0xff;
         int t =
-            (((input[2] >> 6) & 1) << 7)
-                | (((input[2] >> 4) & 1) << 6)
-                | (((input[2] >> 2) & 1) << 5)
-                | ((input[2] & 1) << 4)
-                | (((input[3] >> 6) & 1) << 3)
-                | (((input[3] >> 4) & 1) << 2)
-                | (((input[3] >> 2) & 1) << 1)
-                | (input[3] & 1);
+            (((b2 >> 6) & 1) << 7)
+                | (((b2 >> 4) & 1) << 6)
+                | (((b2 >> 2) & 1) << 5)
+                | ((b2 & 1) << 4)
+                | (((b3 >> 6) & 1) << 3)
+                | (((b3 >> 4) & 1) << 2)
+                | (((b3 >> 2) & 1) << 1)
+                | (b3 & 1);
         byte[] out = input.clone();
         int limit = Math.min(100, out.length);
         for (int i = limit - 1; i >= 2; i--) {
@@ -117,6 +124,7 @@ final class Crypto {
             }
             return baos.toByteArray();
         } catch (IOException ex) {
+            logger.warn("LZ4 解密失败，返回空数据", ex);
             return new byte[0];
         }
     }

@@ -1,50 +1,42 @@
-<template>
-  <div class="dashboard-page">
+﻿<template>
+  <div class="game-page">
     <button v-if="authUser" class="logout-fab" type="button" @click="handleLogout">
       退出登录
     </button>
+
     <div class="content">
       <div class="header">
-        <div>
-          <h1>游戏功能</h1>
-          <p v-if="authUser">欢迎，{{ authUser.username }}，选择 Token 后即可操作收罐子。</p>
-          <p v-else>请先登录。</p>
-        </div>
         <div class="header-actions">
-          <button class="ghost" type="button" @click="router.push('/profile')">个人信息管理</button>
+          <button class="ghost" type="button" @click="router.push('/profile')">
+            个人信息管理
+          </button>
         </div>
       </div>
 
-      <div class="grid">
-        <label class="field">
-          Token UUID
-          <input v-model="tokenIdInput" placeholder="输入 Token ID" />
-        </label>
-        <div class="field">
-          当前 Token
-          <div class="pill" v-if="tokenRecord">
-            #{{ tokenRecord.id }}
-            <span v-if="tokenRecord.regionName">· {{ tokenRecord.regionName }}</span>
-            <span v-if="tokenRecord.roleName">· {{ tokenRecord.roleName }}</span>
-          </div>
-          <div class="pill" v-else>未选择</div>
+      <div class="identity-wrapper">
+        <IdentityCard
+          :role-info="roleInfo"
+          :loading="roleLoading"
+          :show-refresh="true"
+          @refresh="loadRoleInfo(true)"
+        />
+      </div>
+
+      <div class="card">
+        <div class="card-title">操作面板</div>
+        <div class="card-actions">
+          <button class="primary" :disabled="loading || !tokenRecord" @click="handleRestartBottle">
+            重启罐子
+          </button>
         </div>
+        <p v-if="statusNote" class="status-note" :class="{ error: statusIsError }">
+          {{ statusNote }}
+        </p>
       </div>
+    </div>
 
-      <div class="actions">
-        <button class="ghost" :disabled="loading" @click="fetchTokenRecord">
-          加载 Token
-        </button>
-        <button class="secondary" :disabled="loading || !tokenRecord" @click="handleRestartBottle">
-          重启罐子
-        </button>
-      </div>
-
-      <div class="status">
-        <strong>连接状态</strong>
-        <span :class="statusClass">{{ statusText }}</span>
-        <span v-if="tokenRecord">Token: {{ maskedToken }}</span>
-      </div>
+    <div class="connection-status" :class="statusClass">
+      连接状态：{{ statusText }}
     </div>
   </div>
 </template>
@@ -53,6 +45,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { g_utils } from "../utils/bonProtocol.js";
+import IdentityCard from "../components/IdentityCard.vue";
 
 const route = useRoute();
 const router = useRouter();
@@ -65,14 +58,13 @@ const authUser = ref(
 
 const tokenRecord = ref(null);
 const tokenJson = ref("");
-const tokenIdInput = ref(route.params.tokenId || "");
+const tokenId = ref(route.params.tokenId || "");
 const loading = ref(false);
 const status = ref("disconnected");
-const logs = ref([]);
-
-const addLog = (message) => {
-  logs.value.unshift(`[${new Date().toLocaleTimeString()}] ${message}`);
-};
+const statusNote = ref("");
+const statusIsError = ref(false);
+const roleInfo = ref(null);
+const roleLoading = ref(false);
 
 const statusText = computed(() => {
   switch (status.value) {
@@ -92,13 +84,6 @@ const statusClass = computed(() => ({
   connecting: status.value === "connecting",
   error: status.value === "error",
 }));
-
-const maskedToken = computed(() => {
-  if (!tokenRecord.value?.token) return "";
-  const raw = tokenRecord.value.token;
-  if (raw.length <= 8) return raw;
-  return `${raw.slice(0, 6)}...${raw.slice(-4)}`;
-});
 
 const authHeaders = () =>
   authToken.value
@@ -140,15 +125,20 @@ const decodeTokenFromBase64 = (encoded) => {
   });
 };
 
+const setNote = (message, isError = false) => {
+  statusNote.value = message;
+  statusIsError.value = isError;
+};
+
 const fetchTokenRecord = async () => {
   if (!(await ensureAuth())) return;
-  if (!tokenIdInput.value) {
-    addLog("请输入 Token ID。");
+  if (!tokenId.value) {
+    setNote("缺少 Token，无法加载。", true);
     return;
   }
   loading.value = true;
   try {
-    const response = await fetch(`/api/v1/xyzw/tokens/${tokenIdInput.value}`, {
+    const response = await fetch(`/api/v1/xyzw/tokens/${tokenId.value}`, {
       headers: { ...authHeaders() },
     });
     const payload = await response.json();
@@ -160,18 +150,44 @@ const fetchTokenRecord = async () => {
     if (payload.data.bin) {
       tokenRecord.value.bin = payload.data.bin;
     }
-    addLog(`已加载 Token #${tokenRecord.value.id}`);
+    setNote("Token 已加载，可进行操作。", false);
+    await loadRoleInfo(true);
   } catch (error) {
-    addLog(`加载 Token 失败: ${error.message}`);
+    setNote(`加载 Token 失败: ${error.message}`, true);
   } finally {
     loading.value = false;
+  }
+};
+
+const loadRoleInfo = async (refresh = false) => {
+  if (!(await ensureAuth())) return;
+  if (!tokenRecord.value?.token) return;
+  roleLoading.value = true;
+  try {
+    const tokenJsonValue = buildTokenJson();
+    const response = await fetch(
+      `/api/v1/xyzw/ws/roleinfo?token=${encodeURIComponent(tokenJsonValue)}&refresh=${refresh}`,
+      { headers: { ...authHeaders() } },
+    );
+    const payload = await response.json();
+    if (!response.ok || !payload.success) {
+      throw new Error(payload.message || "获取身份牌失败");
+    }
+    roleInfo.value = payload.data?.roleInfo || null;
+    if (!roleInfo.value && refresh) {
+      setNote("身份牌信息为空，可稍后重试。", true);
+    }
+  } catch (error) {
+    setNote(`获取身份牌失败: ${error.message}`, true);
+  } finally {
+    roleLoading.value = false;
   }
 };
 
 const handleRestartBottle = async () => {
   if (!(await ensureAuth())) return;
   if (!tokenRecord.value?.token) {
-    addLog("请先加载 Token。");
+    setNote("请先加载 Token。", true);
     return;
   }
 
@@ -202,10 +218,11 @@ const handleRestartBottle = async () => {
     }
 
     status.value = "connected";
-    addLog("已请求后端重启罐子。");
+    setNote("已请求后端重启罐子。", false);
+    await loadRoleInfo(true);
   } catch (error) {
     status.value = "error";
-    addLog(`重启罐子失败: ${error.message}`);
+    setNote(`重启罐子失败: ${error.message}`, true);
   } finally {
     loading.value = false;
   }
@@ -250,8 +267,10 @@ const statusTimer = setInterval(refreshStatus, 30000);
 
 onMounted(() => {
   if (route.params.tokenId) {
-    tokenIdInput.value = route.params.tokenId;
+    tokenId.value = route.params.tokenId;
     fetchTokenRecord();
+  } else {
+    setNote("请从个人信息管理进入该页面。", true);
   }
 });
 
@@ -261,9 +280,9 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.dashboard-page {
+.game-page {
   min-height: 100dvh;
-  padding: 32px 22px 72px;
+  padding: 32px 22px 88px;
   position: relative;
   overflow: hidden;
   background:
@@ -275,8 +294,8 @@ onBeforeUnmount(() => {
   font-family: "Manrope", "Noto Sans SC", "PingFang SC", sans-serif;
 }
 
-.dashboard-page::before,
-.dashboard-page::after {
+.game-page::before,
+.game-page::after {
   content: "";
   position: absolute;
   inset: -20%;
@@ -291,13 +310,14 @@ onBeforeUnmount(() => {
   z-index: 0;
 }
 
-.dashboard-page::after {
+.game-page::after {
   opacity: 0.28;
   background-position: 40px 120px, 120px 20px, 200px 160px;
 }
 
 .content {
-  max-width: 980px;
+  max-width: 1600px;
+  width: min(96vw, 1600px);
   margin: 0 auto;
   position: relative;
   z-index: 1;
@@ -306,9 +326,9 @@ onBeforeUnmount(() => {
 .header {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 16px;
-  margin-bottom: 18px;
+  margin-bottom: 8px;
 }
 
 .header-actions {
@@ -343,46 +363,30 @@ onBeforeUnmount(() => {
   backdrop-filter: blur(8px);
 }
 
-.grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+.card {
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  padding: 18px;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+  max-width: 520px;
 }
 
-.field {
-  display: grid;
-  gap: 6px;
-  font-size: 13px;
-  color: rgba(15, 23, 42, 0.72);
+.card-title {
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 12px;
 }
 
-.field input {
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid rgba(148, 163, 184, 0.5);
-  background: rgba(255, 255, 255, 0.75);
-  color: #0f172a;
-}
-
-.pill {
-  padding: 8px 12px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.85);
-  border: 1px solid rgba(148, 163, 184, 0.5);
-  color: #0f172a;
-  font-size: 12px;
-}
-
-.actions {
+.card-actions {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   flex-wrap: wrap;
-  margin: 16px 0;
 }
 
-.actions button {
-  padding: 8px 12px;
-  border-radius: 8px;
+.primary {
+  padding: 10px 16px;
+  border-radius: 10px;
   border: none;
   cursor: pointer;
   background: #0f172a;
@@ -390,29 +394,63 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
-.actions .secondary {
-  background: #1f2937;
+.primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
-.actions .ghost {
-  background: transparent;
+.status-note {
+  margin-top: 10px;
+  font-size: 12px;
   color: #0f172a;
-  border: 1px solid rgba(148, 163, 184, 0.6);
 }
 
-.status {
-  margin-bottom: 12px;
-  color: #475569;
+.status-note.error {
+  color: #b91c1c;
+}
+
+.connection-status {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(148, 163, 184, 0.6);
+  font-size: 12px;
+  color: #334155;
+  z-index: 10;
+}
+
+.connection-status.connected {
+  color: #0f766e;
+  border-color: rgba(13, 148, 136, 0.4);
+}
+
+.connection-status.connecting {
+  color: #1d4ed8;
+  border-color: rgba(59, 130, 246, 0.5);
+}
+
+.connection-status.error {
+  color: #b91c1c;
+  border-color: rgba(248, 113, 113, 0.5);
 }
 
 @media (max-width: 720px) {
-  .grid {
-    grid-template-columns: 1fr;
-  }
-
   .header {
     flex-direction: column;
     align-items: flex-start;
   }
+
+  .card {
+    width: 100%;
+  }
+}
+
+.identity-wrapper {
+  margin: 0 auto 10px;
+  width: 100%;
 }
 </style>

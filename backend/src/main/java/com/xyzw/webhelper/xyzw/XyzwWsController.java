@@ -30,7 +30,7 @@ public class XyzwWsController {
     public ResponseEntity<Map<String, Object>> connect(@RequestBody XyzwWsConnectRequest request) {
         String token = request.getToken();
         if (token == null || token.trim().isEmpty()) {
-            return ResponseEntity.badRequest().body(build(false, "token is required", null));
+            return ResponseEntity.badRequest().body(build(false, "token 不能为空", null));
         }
 
         String wsUrl = request.getWsUrl();
@@ -49,7 +49,7 @@ public class XyzwWsController {
     public ResponseEntity<Map<String, Object>> disconnect(@RequestBody XyzwWsConnectRequest request) {
         String token = request.getToken();
         if (token == null || token.trim().isEmpty()) {
-            return ResponseEntity.badRequest().body(build(false, "token is required", null));
+            return ResponseEntity.badRequest().body(build(false, "token 不能为空", null));
         }
         wsManager.disconnect(token);
         return ResponseEntity.ok(build(true, "success", null));
@@ -59,19 +59,19 @@ public class XyzwWsController {
     public ResponseEntity<Map<String, Object>> restartBottle(@RequestBody XyzwBottleRequest request) {
         String token = request.getToken();
         if (token == null || token.trim().isEmpty()) {
-            return ResponseEntity.badRequest().body(build(false, "token is required", null));
+            return ResponseEntity.badRequest().body(build(false, "token 不能为空", null));
         }
         int bottleType = request.getBottleType() == null ? 0 : request.getBottleType();
         if (!wsManager.isConnected(token)) {
             String wsUrl = buildDefaultWsUrl(token);
-            logger.info("Restart bottle requested, connect websocket first. bottleType={}, wsUrl={}", bottleType, wsUrl);
+            logger.info("收到重启罐子请求，先建立 WebSocket。bottleType={}, wsUrl={}", bottleType, wsUrl);
             wsManager.connect(token, wsUrl);
             if (!waitForConnection(token, 3000)) {
-                logger.warn("Restart bottle failed: wegenbsocket connect timeout. bottleType={}, wsUrl={}", bottleType, wsUrl);
-                return ResponseEntity.badRequest().body(build(false, "websocket connect failed", null));
+                logger.warn("重启罐子失败：WebSocket 连接超时。bottleType={}, wsUrl={}", bottleType, wsUrl);
+                return ResponseEntity.badRequest().body(build(false, "WebSocket 连接失败", null));
             }
         }
-        logger.info("Restart bottle: websocket connected, sending restart. bottleType={}", bottleType);
+        logger.info("WebSocket 已连接，发送重启罐子指令。bottleType={}", bottleType);
         wsManager.sendBottleHelperRestart(token, bottleType);
         return ResponseEntity.ok(build(true, "success", null));
     }
@@ -84,13 +84,61 @@ public class XyzwWsController {
         return ResponseEntity.ok(build(true, "success", data));
     }
 
+    @GetMapping("/roleinfo")
+    public ResponseEntity<Map<String, Object>> roleInfo(
+        @RequestParam("token") String token,
+        @RequestParam(value = "refresh", required = false, defaultValue = "false") boolean refresh
+    ) {
+        if (token == null || token.trim().isEmpty()) {
+            return ResponseEntity.badRequest().body(build(false, "token 不能为空", null));
+        }
+        logger.info("身份牌查询开始 refresh={} token={}", refresh, token);
+        if (refresh) {
+            if (!wsManager.isConnected(token)) {
+                String wsUrl = buildDefaultWsUrl(token);
+                wsManager.connect(token, wsUrl);
+                if (!waitForConnection(token, 3000)) {
+                    logger.warn("身份牌查询失败：WebSocket 连接超时 token={}", token);
+                    return ResponseEntity.badRequest().body(build(false, "WebSocket 连接失败", null));
+                }
+            }
+            try {
+                wsManager.requestRoleInfo(token);
+            } catch (IllegalStateException ex) {
+                logger.warn("身份牌查询失败：{}", ex.getMessage());
+                return ResponseEntity.badRequest().body(build(false, ex.getMessage(), null));
+            }
+        }
+        Map<String, Object> roleInfo = wsManager.getRoleInfo(token);
+        if (roleInfo == null && refresh) {
+            roleInfo = wsManager.waitForRoleInfo(token, 5000);
+            if (roleInfo == null) {
+                try {
+                    wsManager.requestRoleInfo(token);
+                    roleInfo = wsManager.waitForRoleInfo(token, 3000);
+                } catch (IllegalStateException ex) {
+                    logger.warn("身份牌查询失败：{}", ex.getMessage());
+                    return ResponseEntity.badRequest().body(build(false, ex.getMessage(), null));
+                }
+            }
+        }
+        Map<String, Object> data = new HashMap<String, Object>();
+        if (roleInfo != null) {
+            data.put("roleInfo", roleInfo);
+            logger.info("身份牌查询成功 token={}", token);
+        } else {
+            logger.warn("身份牌查询结果为空 token={}", token);
+        }
+        return ResponseEntity.ok(build(true, "success", data));
+    }
+
     private String buildDefaultWsUrl(String token) {
         try {
             return "wss://xxz-xyzw.hortorgames.com/agent?p=" +
                 java.net.URLEncoder.encode(token, "UTF-8") +
                 "&e=x&lang=chinese";
         } catch (java.io.UnsupportedEncodingException ex) {
-            throw new IllegalStateException("Unsupported encoding UTF-8", ex);
+            throw new IllegalStateException("不支持的编码 UTF-8", ex);
         }
     }
 

@@ -8,10 +8,12 @@ import org.slf4j.LoggerFactory;
 import java.net.URI;
 import java.nio.ByteBuffer;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
 
 final class XyzwWsClient extends WebSocketClient {
@@ -23,15 +25,23 @@ final class XyzwWsClient extends WebSocketClient {
     private final AtomicInteger seq = new AtomicInteger(0);
     private final AtomicInteger ack = new AtomicInteger(0);
     private ScheduledFuture<?> heartbeatTask;
+    private final String key;
+    private final PacketListener packetListener;
 
-    XyzwWsClient(URI serverUri, ScheduledExecutorService scheduler) {
+    interface PacketListener {
+        void onPacket(String key, String cmd, Object body);
+    }
+
+    XyzwWsClient(URI serverUri, ScheduledExecutorService scheduler, String key, PacketListener packetListener) {
         super(serverUri);
         this.scheduler = scheduler;
+        this.key = key;
+        this.packetListener = packetListener;
     }
 
     @Override
     public void onOpen(ServerHandshake handshakeData) {
-        logger.info("websocket已连接: {}", getURI());
+        logger.info("WebSocket已连接: {}", getURI());
         startHeartbeat();
     }
 
@@ -46,34 +56,51 @@ final class XyzwWsClient extends WebSocketClient {
         bytes.get(payload);
         try {
             byte[] plain = crypto.decryptAuto(payload);
+            if (plain.length == 0) {
+                logger.warn("WebSocket ??????????????????");
+            }
             Object decoded = codec.decode(plain);
-            if (decoded instanceof Map) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> packet = (Map<String, Object>) decoded;
-                Object seqValue = packet.get("seq");
-                if (seqValue instanceof Number) {
-                    ack.set(((Number) seqValue).intValue());
+            if (!(decoded instanceof Map)) {
+                logger.warn("?? WebSocket ????????? Map");
+                return;
+            }
+            @SuppressWarnings("unchecked")
+            Map<String, Object> packet = (Map<String, Object>) decoded;
+            Object seqValue = packet.get("seq");
+            if (seqValue instanceof Number) {
+                ack.set(((Number) seqValue).intValue());
+            }
+            if (packetListener != null) {
+                String cmd = String.valueOf(packet.get("cmd"));
+                if (cmd != null) {
+                    cmd = cmd.toLowerCase(Locale.ROOT);
                 }
+                Object body = packet.get("body");
+                Object bodyDecoded = body;
+                if (body instanceof byte[]) {
+                    bodyDecoded = codec.decode((byte[]) body);
+                }
+                packetListener.onPacket(key, cmd, bodyDecoded);
             }
         } catch (Exception ex) {
-            logger.debug("Failed to parse ws message", ex);
+            logger.warn("?? WebSocket ????", ex);
         }
     }
 
     @Override
     public void onClose(int code, String reason, boolean remote) {
-        logger.info("WebSocket链接关闭: code={}, reason={}", code, reason);
+        logger.info("WebSocket连接关闭: code={}, reason={}", code, reason);
         stopHeartbeat();
     }
 
     @Override
     public void onError(Exception ex) {
-        logger.warn("WebSocket error", ex);
+        logger.warn("WebSocket异常", ex);
     }
 
     void sendCommand(String cmd, Map<String, Object> body) {
         if (!isOpen()) {
-            logger.warn("WebSocket not open, skip command {}", cmd);
+            logger.warn("WebSocket未连接，跳过命令 {}", cmd);
             return;
         }
         int seqValue = "_sys/ack".equals(cmd) ? 0 : seq.incrementAndGet();
@@ -82,12 +109,19 @@ final class XyzwWsClient extends WebSocketClient {
         packet.put("ack", ack.get());
         packet.put("seq", seqValue);
         packet.put("time", System.currentTimeMillis());
+        if (!"_sys/ack".equals(cmd)) {
+            packet.put("rtt", ThreadLocalRandom.current().nextInt(0, 500));
+            packet.put("code", 0);
+        }
         if (body != null) {
             packet.put("body", codec.encode(body));
         } else {
             packet.put("body", codec.encode(new LinkedHashMap<String, Object>()));
         }
 
+        if (!"_sys/ack".equals(cmd)) {
+            logger.info("发送指令 cmd={} token={}", cmd, key);
+        }
         byte[] encoded = codec.encode(packet);
         byte[] encrypted = crypto.encryptX(encoded);
         send(encrypted);
@@ -99,7 +133,7 @@ final class XyzwWsClient extends WebSocketClient {
             try {
                 sendCommand("_sys/ack", new LinkedHashMap<String, Object>());
             } catch (Exception ex) {
-                logger.debug("Heartbeat failed", ex);
+            logger.warn("?? WebSocket ????", ex);
             }
         }, 3, 5, TimeUnit.SECONDS);
     }
