@@ -39,20 +39,20 @@
               罐子助手
             </div>
           </div>
-          <div class="helper-body">
+          <div class="card-main helper-main">
             <div class="helper-meta">
               <div class="helper-label">剩余时间</div>
               <div class="helper-value">{{ formatTime(helperRemaining) }}</div>
             </div>
-            <div class="helper-actions">
-              <button
-                class="primary"
-                :disabled="bottleLoading || !tokenRecord"
-                @click="handleRestartBottle"
-              >
-                重启罐子
-              </button>
-            </div>
+          </div>
+          <div class="card-footer-actions">
+            <button
+              class="card-btn"
+              :disabled="bottleLoading || !tokenRecord"
+              @click="handleRestartBottle"
+            >
+              重启罐子
+            </button>
           </div>
         </div>
 
@@ -67,29 +67,29 @@
               挂机时间
             </div>
           </div>
-          <div class="helper-body">
+          <div class="card-main helper-main">
             <div class="helper-meta">
               <div class="helper-label">剩余时间</div>
               <div class="helper-value">{{ formatTime(hangupRemaining) }}</div>
               <div class="helper-label">已挂机时间</div>
               <div class="helper-value">{{ formatTime(hangupElapsed) }}</div>
             </div>
-            <div class="helper-actions">
-              <button
-                class="primary"
-                :disabled="hangupExtendLoading || !tokenRecord"
-                @click="handleExtendHangup"
-              >
-                加钟
-              </button>
-              <button
-                class="ghost"
-                :disabled="hangupClaimLoading || !tokenRecord"
-                @click="handleClaimHangupReward"
-              >
-                获取奖励
-              </button>
-            </div>
+          </div>
+          <div class="card-footer-actions">
+            <button
+              class="card-btn"
+              :disabled="hangupExtendLoading || !tokenRecord"
+              @click="handleExtendHangup"
+            >
+              加钟
+            </button>
+            <button
+              class="card-btn card-btn-secondary"
+              :disabled="hangupClaimLoading || !tokenRecord"
+              @click="handleClaimHangupReward"
+            >
+              获取奖励
+            </button>
           </div>
         </div>
 
@@ -103,24 +103,8 @@
               />
               每日任务
             </div>
-            <div class="daily-header-actions">
-              <button
-                class="ghost team-refresh-btn"
-                :disabled="dailyRunLoading || !tokenRecord"
-                @click="showDailySettings = true"
-              >
-                任务设置
-              </button>
-              <button
-                class="primary daily-run-btn"
-                :disabled="dailyRunLoading || !tokenRecord"
-                @click="handleRunDailyTasks"
-              >
-                {{ dailyRunLoading ? "执行中..." : "完成任务" }}
-              </button>
-            </div>
           </div>
-          <div class="daily-progress">
+          <div class="card-main daily-progress">
             <div class="progress-label">
               进度
               <span class="progress-value">{{ dailyPoint }} / 100</span>
@@ -135,6 +119,22 @@
               先在任务设置中勾选要执行的项目，再一键完成每日任务。
             </div>
           </div>
+          <div class="card-footer-actions">
+            <button
+              class="card-btn card-btn-secondary"
+              :disabled="dailyRunLoading || !tokenRecord"
+              @click="showDailySettings = true"
+            >
+              任务设置
+            </button>
+            <button
+              class="card-btn"
+              :disabled="dailyRunLoading || !tokenRecord"
+              @click="handleRunDailyTasks"
+            >
+              {{ dailyRunLoading ? "执行中..." : "完成任务" }}
+            </button>
+          </div>
         </div>
 
         <div class="card tower-card">
@@ -147,15 +147,8 @@
               />
               咸将塔
             </div>
-            <button
-              class="ghost team-refresh-btn"
-              :disabled="towerLoading || !tokenRecord"
-              @click="loadTowerInfo(true)"
-            >
-              刷新
-            </button>
           </div>
-          <div class="tower-overview">
+          <div class="card-main tower-overview">
             <div>
               <div class="helper-label">当前层数</div>
               <div class="helper-value">{{ towerFloor }}</div>
@@ -165,9 +158,16 @@
               <div class="helper-value">{{ towerEnergy }}</div>
             </div>
           </div>
-          <div class="helper-actions">
+          <div class="card-footer-actions">
             <button
-              class="primary"
+              class="card-btn card-btn-secondary"
+              :disabled="towerLoading || !tokenRecord"
+              @click="loadTowerInfo(true)"
+            >
+              刷新
+            </button>
+            <button
+              class="card-btn"
               :disabled="
                 towerActionLoading || towerLoading || !tokenRecord || towerClimbing || towerEnergy <= 0
               "
@@ -176,7 +176,7 @@
               {{ towerClimbing ? "爬塔中..." : "开始爬塔" }}
             </button>
             <button
-              class="ghost"
+              class="card-btn card-btn-secondary"
               :disabled="towerActionLoading || !towerClimbing"
               @click="handleStopTowerClimb"
             >
@@ -1084,6 +1084,9 @@ const hangupTimer = setInterval(() => {
   border: 1px solid rgba(148, 163, 184, 0.45);
   padding: 18px;
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+  min-height: 188px;
+  display: flex;
+  flex-direction: column;
 }
 
 .card-title {
@@ -1126,11 +1129,8 @@ const hangupTimer = setInterval(() => {
   margin-bottom: 10px;
 }
 
-.helper-body {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+.card-main {
+  flex: 1;
 }
 
 .helper-meta {
@@ -1155,26 +1155,57 @@ const hangupTimer = setInterval(() => {
   font-size: 12px;
 }
 
-.helper-actions {
+.card-footer-actions {
   display: flex;
   gap: 8px;
+  justify-content: flex-end;
+  align-items: flex-end;
+  margin-top: 12px;
+  flex-wrap: wrap;
 }
 
-.team-refresh-btn {
-  padding: 4px 10px;
-  font-size: 12px;
+.card-btn {
+  min-width: 88px;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  background: linear-gradient(130deg, #9aa5b5, #7f8c9e);
+  color: #f8fafc;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 8px 16px rgba(15, 23, 42, 0.12);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
 }
 
-.daily-header-actions {
+.card-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 20px rgba(15, 23, 42, 0.16);
+}
+
+.card-btn:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.card-btn-secondary {
+  background: rgba(255, 255, 255, 0.86);
+  color: #334155;
+  border-color: rgba(148, 163, 184, 0.75);
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.08);
+}
+
+.helper-main {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: flex-start;
 }
 
-.daily-run-btn {
-  padding: 5px 12px;
-  font-size: 12px;
-  border-radius: 8px;
+.daily-progress {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .daily-card .progress-label {
@@ -1216,7 +1247,7 @@ const hangupTimer = setInterval(() => {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
-  margin-bottom: 10px;
+  align-content: start;
 }
 
 .primary {
@@ -1380,17 +1411,12 @@ const hangupTimer = setInterval(() => {
     align-items: flex-start;
   }
 
-  .helper-body {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .helper-actions {
+  .card-footer-actions {
     width: 100%;
+    justify-content: stretch;
   }
 
-  .helper-actions .primary,
-  .helper-actions .ghost {
+  .card-footer-actions .card-btn {
     width: 100%;
     text-align: center;
   }
