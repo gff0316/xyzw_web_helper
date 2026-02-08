@@ -12,8 +12,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 final class XyzwWsClient extends WebSocketClient {
@@ -41,7 +41,7 @@ final class XyzwWsClient extends WebSocketClient {
 
     @Override
     public void onOpen(ServerHandshake handshakeData) {
-        logger.info("WebSocket已连接: {}", getURI());
+        logger.info("WebSocket 已连接 {}", getURI());
         startHeartbeat();
     }
 
@@ -57,11 +57,11 @@ final class XyzwWsClient extends WebSocketClient {
         try {
             byte[] plain = crypto.decryptAuto(payload);
             if (plain.length == 0) {
-                logger.warn("WebSocket ??????????????????");
+                logger.warn("WebSocket 收到空载荷");
             }
             Object decoded = codec.decode(plain);
             if (!(decoded instanceof Map)) {
-                logger.warn("?? WebSocket ????????? Map");
+                logger.warn("WebSocket 解码结果不是 Map");
                 return;
             }
             @SuppressWarnings("unchecked")
@@ -83,24 +83,24 @@ final class XyzwWsClient extends WebSocketClient {
                 packetListener.onPacket(key, cmd, bodyDecoded);
             }
         } catch (Exception ex) {
-            logger.warn("?? WebSocket ????", ex);
+            logger.warn("WebSocket 解码失败", ex);
         }
     }
 
     @Override
     public void onClose(int code, String reason, boolean remote) {
-        logger.info("WebSocket连接关闭: code={}, reason={}", code, reason);
+        logger.info("WebSocket 连接关闭: code={}, reason={}", code, reason);
         stopHeartbeat();
     }
 
     @Override
     public void onError(Exception ex) {
-        logger.warn("WebSocket异常", ex);
+        logger.warn("WebSocket 异常", ex);
     }
 
     void sendCommand(String cmd, Map<String, Object> body) {
         if (!isOpen()) {
-            logger.warn("WebSocket未连接，跳过命令 {}", cmd);
+            logger.warn("WebSocket 未连接，跳过指令 {}", cmd);
             return;
         }
         int seqValue = "_sys/ack".equals(cmd) ? 0 : seq.incrementAndGet();
@@ -133,7 +133,7 @@ final class XyzwWsClient extends WebSocketClient {
             try {
                 sendCommand("_sys/ack", new LinkedHashMap<String, Object>());
             } catch (Exception ex) {
-            logger.warn("?? WebSocket ????", ex);
+                logger.warn("WebSocket 心跳发送失败", ex);
             }
         }, 3, 5, TimeUnit.SECONDS);
     }

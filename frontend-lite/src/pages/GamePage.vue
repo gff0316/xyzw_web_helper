@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="game-page">
     <button
       v-if="authUser"
@@ -27,63 +27,160 @@
         />
       </div>
 
-      <div class="card helper-card">
-        <div class="card-header-line">
-          <div class="card-title with-icon">
-            <img
-              class="card-icon"
-              src="/icons/173746572831736.png"
-              alt="罐子助手"
-            />
-            罐子助手
+      <div class="cards-grid">
+        <div class="card helper-card">
+          <div class="card-header-line">
+            <div class="card-title with-icon">
+              <img
+                class="card-icon"
+                src="/icons/173746572831736.png"
+                alt="罐子助手"
+              />
+              罐子助手
+            </div>
+          </div>
+          <div class="helper-body">
+            <div class="helper-meta">
+              <div class="helper-label">剩余时间</div>
+              <div class="helper-value">{{ formatTime(helperRemaining) }}</div>
+            </div>
+            <div class="helper-actions">
+              <button
+                class="primary"
+                :disabled="bottleLoading || !tokenRecord"
+                @click="handleRestartBottle"
+              >
+                重启罐子
+              </button>
+            </div>
           </div>
         </div>
-        <div class="helper-body">
-          <div class="helper-meta">
-            <div class="helper-label">剩余时间</div>
-            <div class="helper-value">{{ formatTime(helperRemaining) }}</div>
+
+        <div class="card hangup-card">
+          <div class="card-header-line">
+            <div class="card-title with-icon">
+              <img
+                class="card-icon"
+                src="/icons/174061875626614.png"
+                alt="挂机时间"
+              />
+              挂机时间
+            </div>
           </div>
-          <div class="helper-actions">
+          <div class="helper-body">
+            <div class="helper-meta">
+              <div class="helper-label">剩余时间</div>
+              <div class="helper-value">{{ formatTime(hangupRemaining) }}</div>
+              <div class="helper-label">已挂机时间</div>
+              <div class="helper-value">{{ formatTime(hangupElapsed) }}</div>
+            </div>
+            <div class="helper-actions">
+              <button
+                class="primary"
+                :disabled="hangupExtendLoading || !tokenRecord"
+                @click="handleExtendHangup"
+              >
+                加钟
+              </button>
+              <button
+                class="ghost"
+                :disabled="hangupClaimLoading || !tokenRecord"
+                @click="handleClaimHangupReward"
+              >
+                获取奖励
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card daily-card">
+          <div class="card-header-line">
+            <div class="card-title with-icon">
+              <img
+                class="card-icon"
+                src="/icons/174023274867420.png"
+                alt="每日任务"
+              />
+              每日任务
+            </div>
+            <div class="daily-header-actions">
+              <button
+                class="ghost team-refresh-btn"
+                :disabled="dailyRunLoading || !tokenRecord"
+                @click="showDailySettings = true"
+              >
+                任务设置
+              </button>
+              <button
+                class="primary daily-run-btn"
+                :disabled="dailyRunLoading || !tokenRecord"
+                @click="handleRunDailyTasks"
+              >
+                {{ dailyRunLoading ? "执行中..." : "完成任务" }}
+              </button>
+            </div>
+          </div>
+          <div class="daily-progress">
+            <div class="progress-label">
+              进度
+              <span class="progress-value">{{ dailyPoint }} / 100</span>
+            </div>
+            <div class="progress-rail">
+              <div
+                class="progress-bar"
+                :style="{ width: `${dailyPoint}%` }"
+              ></div>
+            </div>
+            <div class="progress-hint">
+              先在任务设置中勾选要执行的项目，再一键完成每日任务。
+            </div>
+          </div>
+        </div>
+
+        <div class="card tower-card">
+          <div class="card-header-line">
+            <div class="card-title with-icon">
+              <img
+                class="card-icon"
+                src="/icons/1733492491706148.png"
+                alt="咸将塔"
+              />
+              咸将塔
+            </div>
             <button
-              class="primary"
-              :disabled="loading || !tokenRecord"
-              @click="handleRestartBottle"
+              class="ghost team-refresh-btn"
+              :disabled="towerLoading || !tokenRecord"
+              @click="loadTowerInfo(true)"
             >
-              重启罐子
+              刷新
             </button>
           </div>
-        </div>
-      </div>
-
-      <div class="card hangup-card">
-        <div class="card-header-line">
-          <div class="card-title with-icon">
-            <img
-              class="card-icon"
-              src="/icons/174061875626614.png"
-              alt="挂机时间"
-            />
-            挂机时间
-          </div>
-          <span
-            class="pill"
-            :class="{ connected: hangupRunning, disconnected: !hangupRunning }"
-          >
-            {{ hangupRunning ? "运行中" : "已停" }}
-          </span>
-        </div>
-        <div class="helper-body">
-          <div class="helper-meta">
-            <div class="helper-label">剩余时间</div>
-            <div class="helper-value">{{ formatTime(hangupRemaining) }}</div>
+          <div class="tower-overview">
+            <div>
+              <div class="helper-label">当前层数</div>
+              <div class="helper-value">{{ towerFloor }}</div>
+            </div>
+            <div>
+              <div class="helper-label">体力</div>
+              <div class="helper-value">{{ towerEnergy }}</div>
+            </div>
           </div>
           <div class="helper-actions">
             <button
               class="primary"
-              :disabled="loading || !tokenRecord"
-              @click="handleExtendHangup"
+              :disabled="
+                towerActionLoading || towerLoading || !tokenRecord || towerClimbing || towerEnergy <= 0
+              "
+              @click="handleStartTowerClimb"
             >
-              加钟
+              {{ towerClimbing ? "爬塔中..." : "开始爬塔" }}
+            </button>
+            <button
+              class="ghost"
+              :disabled="towerActionLoading || !towerClimbing"
+              @click="handleStopTowerClimb"
+            >
+              停止爬塔
             </button>
           </div>
         </div>
@@ -93,7 +190,7 @@
     <div class="connection-actions-fixed">
       <button
         class="primary"
-        :disabled="loading || !tokenRecord"
+        :disabled="reconnectLoading || !tokenRecord"
         @click="handleReconnect"
       >
         重新连接
@@ -102,11 +199,88 @@
         连接状态：{{ statusText }}
       </div>
     </div>
+
+    <div
+      v-if="showDailySettings"
+      class="modal-mask"
+      @click.self="showDailySettings = false"
+    >
+      <div class="modal-panel">
+        <div class="modal-head">
+          <div class="modal-title">任务设置</div>
+          <button class="ghost close-btn" @click="showDailySettings = false">
+            关闭
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="setting-row">
+            <label>竞技场阵容</label>
+            <select v-model.number="dailySettings.arenaFormation">
+              <option :value="1">阵容1</option>
+              <option :value="2">阵容2</option>
+              <option :value="3">阵容3</option>
+              <option :value="4">阵容4</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <label>BOSS阵容</label>
+            <select v-model.number="dailySettings.bossFormation">
+              <option :value="1">阵容1</option>
+              <option :value="2">阵容2</option>
+              <option :value="3">阵容3</option>
+              <option :value="4">阵容4</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <label>BOSS次数</label>
+            <select v-model.number="dailySettings.bossTimes">
+              <option :value="0">0次</option>
+              <option :value="1">1次</option>
+              <option :value="2">2次</option>
+              <option :value="3">3次</option>
+              <option :value="4">4次</option>
+            </select>
+          </div>
+
+          <label class="switch-row">
+            <input type="checkbox" v-model="dailySettings.claimBottle" />
+            <span>领取盐罐奖励</span>
+          </label>
+          <label class="switch-row">
+            <input type="checkbox" v-model="dailySettings.claimHangUp" />
+            <span>领取挂机奖励和加钟</span>
+          </label>
+          <label class="switch-row">
+            <input type="checkbox" v-model="dailySettings.arenaEnable" />
+            <span>竞技场任务</span>
+          </label>
+          <label class="switch-row">
+            <input type="checkbox" v-model="dailySettings.openBox" />
+            <span>开启宝箱</span>
+          </label>
+          <label class="switch-row">
+            <input type="checkbox" v-model="dailySettings.claimEmail" />
+            <span>领取邮件奖励</span>
+          </label>
+          <label class="switch-row">
+            <input
+              type="checkbox"
+              v-model="dailySettings.blackMarketPurchase"
+            />
+            <span>黑市购买</span>
+          </label>
+          <label class="switch-row">
+            <input type="checkbox" v-model="dailySettings.payRecruit" />
+            <span>付费招募</span>
+          </label>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { g_utils } from "../utils/bonProtocol.js";
 import IdentityCard from "../components/IdentityCard.vue";
@@ -124,15 +298,41 @@ const tokenRecord = ref(null);
 const tokenJson = ref("");
 const tokenId = ref(route.params.tokenId || "");
 const loading = ref(false);
+const reconnectLoading = ref(false);
+const bottleLoading = ref(false);
+const hangupExtendLoading = ref(false);
+const hangupClaimLoading = ref(false);
+const towerActionLoading = ref(false);
 const status = ref("disconnected");
 const statusNote = ref("");
 const statusIsError = ref(false);
 const helperRemaining = ref(0);
 const helperRunning = ref(false);
 const hangupRemaining = ref(0);
+const hangupElapsed = ref(0);
 const hangupRunning = ref(false);
 const roleInfo = ref(null);
 const roleLoading = ref(false);
+const towerLoading = ref(false);
+const towerFloor = ref("0 - 0");
+const towerEnergy = ref(0);
+const towerClimbing = ref(false);
+const dailyRunLoading = ref(false);
+const showDailySettings = ref(false);
+const BOTTLE_HELPER_RESET_SECONDS = 8 * 3600;
+const defaultDailySettings = {
+  arenaFormation: 1,
+  bossFormation: 1,
+  bossTimes: 2,
+  claimBottle: true,
+  payRecruit: true,
+  openBox: true,
+  arenaEnable: true,
+  claimHangUp: true,
+  claimEmail: true,
+  blackMarketPurchase: true,
+};
+const dailySettings = reactive({ ...defaultDailySettings });
 
 const statusText = computed(() => {
   switch (status.value) {
@@ -152,6 +352,12 @@ const statusClass = computed(() => ({
   connecting: status.value === "connecting",
   error: status.value === "error",
 }));
+
+const dailyPoint = computed(() => {
+  const point = roleInfo.value?.role?.dailyTask?.dailyPoint;
+  const numeric = Math.max(0, Math.min(100, Number(point) || 0));
+  return numeric;
+});
 
 const authHeaders = () =>
   authToken.value ? { Authorization: `Bearer ${authToken.value}` } : {};
@@ -196,6 +402,45 @@ const setNote = (message, isError = false) => {
   statusIsError.value = isError;
 };
 
+const sleep = (ms) =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+const fetchWsStatus = async (tokenJsonValue) => {
+  const response = await fetch(
+    `/api/v1/xyzw/ws/status?token=${encodeURIComponent(tokenJsonValue)}`,
+    { headers: { ...authHeaders() } }
+  );
+  const payload = await response.json();
+  if (!response.ok || !payload.success || !payload.data?.status) {
+    return null;
+  }
+  return payload.data.status;
+};
+
+const waitForWsConnected = async (tokenJsonValue, timeoutMs = 5000) => {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const currentStatus = await fetchWsStatus(tokenJsonValue);
+    if (currentStatus === "connected") {
+      return true;
+    }
+    await sleep(300);
+  }
+  return false;
+};
+
+const applyTowerFromRoleInfo = (info) => {
+  const tower = info?.role?.tower;
+  if (!tower || tower.id == null) return;
+  const towerId = Math.max(0, Number(tower.id) || 0);
+  const floor = Math.floor(towerId / 10) + 1;
+  const layer = (towerId % 10) + 1;
+  towerFloor.value = `${floor} - ${layer}`;
+  towerEnergy.value = Math.max(0, Number(tower.energy) || 0);
+};
+
 const fetchTokenRecord = async () => {
   if (!(await ensureAuth())) return;
   if (!tokenId.value) {
@@ -216,8 +461,10 @@ const fetchTokenRecord = async () => {
     if (payload.data.bin) {
       tokenRecord.value.bin = payload.data.bin;
     }
+    loadDailySettings();
     setNote("Token 已加载，可开始操作。", false);
     await loadRoleInfo(true);
+    await loadTowerInfo(true);
   } catch (error) {
     setNote(`加载 Token 失败: ${error.message}`, true);
   } finally {
@@ -252,11 +499,14 @@ const loadRoleInfo = async (refresh = false) => {
     const hang = payload.data?.roleInfo?.role?.hangUp;
     if (hang?.hangUpTime != null && hang?.lastTime != null) {
       const nowSec = Date.now() / 1000;
-      const elapsed = nowSec - hang.lastTime;
-      const remain = Math.floor(hang.hangUpTime - elapsed);
+      const total = Math.max(0, Math.floor(Number(hang.hangUpTime) || 0));
+      const elapsed = Math.max(0, Math.floor(nowSec - Number(hang.lastTime)));
+      const remain = Math.floor(total - elapsed);
       hangupRemaining.value = Math.max(0, remain);
+      hangupElapsed.value = Math.max(0, total - hangupRemaining.value);
       hangupRunning.value = hangupRemaining.value > 0;
     }
+    applyTowerFromRoleInfo(payload.data?.roleInfo || null);
     if (!roleInfo.value && refresh) {
       setNote("身份牌信息为空，可稍后重试。", true);
     }
@@ -274,7 +524,7 @@ const handleRestartBottle = async () => {
     return;
   }
 
-  loading.value = true;
+  bottleLoading.value = true;
   status.value = "connecting";
   try {
     const tokenJsonValue = buildTokenJson();
@@ -288,7 +538,10 @@ const handleRestartBottle = async () => {
       throw new Error(connectPayload.message || "建立 WebSocket 失败");
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 800));
+    const connected = await waitForWsConnected(tokenJsonValue, 5000);
+    if (!connected) {
+      throw new Error("WebSocket 连接失败或超时");
+    }
 
     const restartResponse = await fetch(
       "/api/v1/xyzw/ws/bottlehelper/restart",
@@ -304,21 +557,19 @@ const handleRestartBottle = async () => {
     }
 
     status.value = "connected";
-    await loadRoleInfo(true);
-    if (helperRemaining.value > 0) {
-      setNote(
-        `已请求重启罐子，剩余时间 ${formatTime(helperRemaining.value)}`,
-        false
-      );
-    } else {
-      status.value = "error";
-      setNote("重启罐子可能失败：剩余时间为 0，建议重试。", true);
-    }
+    helperRemaining.value = BOTTLE_HELPER_RESET_SECONDS;
+    helperRunning.value = true;
+    setNote(
+      `已经请求重启罐子，剩余时间已重置为 ${formatTime(
+        BOTTLE_HELPER_RESET_SECONDS
+      )}`,
+      false
+    );
   } catch (error) {
     status.value = "error";
     setNote(`重启罐子失败: ${error.message}`, true);
   } finally {
-    loading.value = false;
+    bottleLoading.value = false;
   }
 };
 
@@ -341,19 +592,92 @@ const handleLogout = async () => {
 };
 
 const refreshStatus = async () => {
-  if (!tokenRecord.value?.token || status.value !== "connected") return;
+  if (!tokenRecord.value?.token) return;
   try {
     const tokenJsonValue = buildTokenJson();
-    const response = await fetch(
-      `/api/v1/xyzw/ws/status?token=${encodeURIComponent(tokenJsonValue)}`,
-      { headers: { ...authHeaders() } }
-    );
-    const payload = await response.json();
-    if (response.ok && payload.success && payload.data?.status) {
-      status.value = payload.data.status;
+    const currentStatus = await fetchWsStatus(tokenJsonValue);
+    if (currentStatus) {
+      status.value = currentStatus;
     }
   } catch (error) {
     // ignore
+  }
+};
+
+const dailySettingsKey = () => {
+  if (tokenRecord.value?.id != null) {
+    return `daily-settings:${tokenRecord.value.id}`;
+  }
+  if (tokenId.value) {
+    return `daily-settings:${tokenId.value}`;
+  }
+  return "";
+};
+
+const loadDailySettings = () => {
+  const key = dailySettingsKey();
+  if (!key) return;
+  try {
+    const raw = localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : null;
+    Object.assign(dailySettings, defaultDailySettings, parsed || {});
+  } catch (error) {
+    Object.assign(dailySettings, defaultDailySettings);
+  }
+};
+
+const applyDailyPoint = (point) => {
+  const value = Math.max(0, Math.min(100, Number(point) || 0));
+  const current = roleInfo.value || {};
+  const role = current.role && typeof current.role === "object" ? current.role : {};
+  const dailyTask =
+    role.dailyTask && typeof role.dailyTask === "object" ? role.dailyTask : {};
+  roleInfo.value = {
+    ...current,
+    role: {
+      ...role,
+      dailyTask: {
+        ...dailyTask,
+        dailyPoint: value,
+      },
+    },
+  };
+};
+
+const handleRunDailyTasks = async () => {
+  if (!(await ensureAuth())) return;
+  if (!tokenRecord.value?.token) {
+    setNote("请先加载 Token。", true);
+    return;
+  }
+
+  dailyRunLoading.value = true;
+  try {
+    const tokenJsonValue = buildTokenJson();
+    const resp = await fetch("/api/v1/xyzw/ws/daily/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        token: tokenJsonValue,
+        settings: { ...dailySettings },
+      }),
+    });
+    const payload = await resp.json();
+    if (!resp.ok || !payload.success) {
+      throw new Error(payload.message || "执行每日任务失败");
+    }
+
+    const dailyPointFromServer = payload?.data?.dailyPoint;
+    if (dailyPointFromServer != null) {
+      applyDailyPoint(dailyPointFromServer);
+    }
+
+    const executedCount = Number(payload?.data?.executedCount || 0);
+    setNote(`每日任务已执行，已发送 ${executedCount} 个指令。`, false);
+  } catch (error) {
+    setNote(`执行每日任务失败: ${error.message}`, true);
+  } finally {
+    dailyRunLoading.value = false;
   }
 };
 
@@ -363,7 +687,7 @@ const handleReconnect = async () => {
     setNote("请先加载 Token。", true);
     return;
   }
-  loading.value = true;
+  reconnectLoading.value = true;
   status.value = "connecting";
   try {
     const tokenJsonValue = buildTokenJson();
@@ -376,14 +700,20 @@ const handleReconnect = async () => {
     if (!resp.ok || !payload.success) {
       throw new Error(payload.message || "重连 WebSocket 失败");
     }
+
+    const connected = await waitForWsConnected(tokenJsonValue, 5000);
+    if (!connected) {
+      throw new Error("WebSocket 连接失败或超时");
+    }
+
     status.value = "connected";
     setNote("已重新建立 WebSocket。", false);
-    await loadRoleInfo(true);
+    await loadTowerInfo(true);
   } catch (error) {
     status.value = "error";
     setNote(`重连失败: ${error.message}`, true);
   } finally {
-    loading.value = false;
+    reconnectLoading.value = false;
   }
 };
 
@@ -393,7 +723,7 @@ const handleExtendHangup = async () => {
     setNote("请先加载 Token。", true);
     return;
   }
-  loading.value = true;
+  hangupExtendLoading.value = true;
   try {
     const tokenJsonValue = buildTokenJson();
     const resp = await fetch("/api/v1/xyzw/ws/hangup/extend", {
@@ -405,13 +735,186 @@ const handleExtendHangup = async () => {
     if (!resp.ok || !payload.success) {
       throw new Error(payload.message || "挂机加钟失败");
     }
-    setNote("已请求加钟，请稍后查看剩余时间。", false);
-    await loadRoleInfo(true);
+    const synced = await syncHangupRemaining(tokenJsonValue);
+    if (!synced) {
+      const remain = Number(payload?.data?.remainingSeconds);
+      const elapsed = Number(payload?.data?.elapsedSeconds);
+      if (Number.isFinite(remain) && remain >= 0) {
+        hangupRemaining.value = Math.floor(remain);
+        hangupRunning.value = hangupRemaining.value > 0;
+      }
+      if (Number.isFinite(elapsed) && elapsed >= 0) {
+        hangupElapsed.value = Math.floor(elapsed);
+      }
+    }
+    setNote(`已请求加钟，挂机剩余时间 ${formatTime(hangupRemaining.value)}。`, false);
   } catch (error) {
     setNote(`加钟失败: ${error.message}`, true);
   } finally {
-    loading.value = false;
+    hangupExtendLoading.value = false;
   }
+};
+
+const applyTowerData = (data) => {
+  towerFloor.value = data?.floor || "0 - 0";
+  towerEnergy.value = Math.max(0, Number(data?.energy) || 0);
+};
+
+const loadTowerInfo = async (refresh = true) => {
+  if (!(await ensureAuth())) return;
+  if (!tokenRecord.value?.token) return;
+  towerLoading.value = true;
+  try {
+    const tokenJsonValue = buildTokenJson();
+    const response = await fetch(
+      `/api/v1/xyzw/ws/tower/info?token=${encodeURIComponent(
+        tokenJsonValue
+      )}&refresh=${refresh}`,
+      { headers: { ...authHeaders() } }
+    );
+    const payload = await response.json();
+    if (!response.ok || !payload.success) {
+      throw new Error(payload.message || "获取咸将塔信息失败");
+    }
+    applyTowerData(payload.data || {});
+  } catch (error) {
+    setNote(`获取咸将塔信息失败: ${error.message}`, true);
+  } finally {
+    towerLoading.value = false;
+  }
+};
+
+const handleTowerChallengeOnce = async () => {
+  if (!(await ensureAuth())) return;
+  if (!tokenRecord.value?.token) {
+    setNote("请先加载 Token。", true);
+    return;
+  }
+  towerActionLoading.value = true;
+  towerLoading.value = true;
+  try {
+    const tokenJsonValue = buildTokenJson();
+    const response = await fetch("/api/v1/xyzw/ws/tower/challenge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ token: tokenJsonValue }),
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.success) {
+      throw new Error(payload.message || "咸将塔挑战失败");
+    }
+    applyTowerData(payload.data || {});
+    setNote("咸将塔挑战请求已发送。", false);
+  } catch (error) {
+    setNote(`咸将塔挑战失败: ${error.message}`, true);
+  } finally {
+    towerLoading.value = false;
+    towerActionLoading.value = false;
+  }
+};
+
+const handleStartTowerClimb = async () => {
+  if (towerClimbing.value) return;
+  if (!(await ensureAuth())) return;
+  if (!tokenRecord.value?.token) {
+    setNote("请先加载 Token。", true);
+    return;
+  }
+  if (towerEnergy.value <= 0) {
+    setNote("当前体力不足，无法爬塔。", true);
+    return;
+  }
+
+  towerClimbing.value = true;
+  let count = 0;
+  const maxCount = 100;
+
+  try {
+    while (towerClimbing.value && count < maxCount) {
+      if (towerEnergy.value <= 0) break;
+      await handleTowerChallengeOnce();
+      count += 1;
+      if (!towerClimbing.value) break;
+      await sleep(800);
+      await loadTowerInfo(true);
+    }
+    if (towerEnergy.value <= 0) {
+      setNote(`爬塔结束：体力已用完，共挑战 ${count} 次。`, false);
+    } else {
+      setNote(`爬塔已停止，共挑战 ${count} 次。`, false);
+    }
+  } finally {
+    towerClimbing.value = false;
+  }
+};
+
+const handleStopTowerClimb = () => {
+  towerClimbing.value = false;
+};
+
+const handleClaimHangupReward = async () => {
+  if (!(await ensureAuth())) return;
+  if (!tokenRecord.value?.token) {
+    setNote("请先加载 Token。", true);
+    return;
+  }
+  hangupClaimLoading.value = true;
+  try {
+    const tokenJsonValue = buildTokenJson();
+    const resp = await fetch("/api/v1/xyzw/ws/hangup/claim", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ token: tokenJsonValue }),
+    });
+    const payload = await resp.json();
+    if (!resp.ok || !payload.success) {
+      throw new Error(payload.message || "领取挂机奖励失败");
+    }
+    const synced = await syncHangupRemaining(tokenJsonValue);
+    if (!synced) {
+      const remain = Number(payload?.data?.remainingSeconds);
+      const elapsed = Number(payload?.data?.elapsedSeconds);
+      if (Number.isFinite(remain) && remain >= 0) {
+        hangupRemaining.value = Math.floor(remain);
+        hangupRunning.value = hangupRemaining.value > 0;
+      }
+      if (Number.isFinite(elapsed) && elapsed >= 0) {
+        hangupElapsed.value = Math.floor(elapsed);
+      }
+    }
+    setNote(
+      `挂机奖励已请求，剩余时间 ${formatTime(hangupRemaining.value)}。`,
+      false
+    );
+  } catch (error) {
+    setNote(`领取挂机奖励失败: ${error.message}`, true);
+  } finally {
+    hangupClaimLoading.value = false;
+  }
+};
+
+const syncHangupRemaining = async (tokenJsonValue) => {
+  const response = await fetch(
+    `/api/v1/xyzw/ws/hangup/remaining?token=${encodeURIComponent(
+      tokenJsonValue
+    )}`,
+    { headers: { ...authHeaders() } }
+  );
+  const payload = await response.json();
+  if (!response.ok || !payload.success) {
+    return false;
+  }
+  const remain = Number(payload?.data?.remainingSeconds);
+  const elapsed = Number(payload?.data?.elapsedSeconds);
+  if (!Number.isFinite(remain) || remain < 0) {
+    return false;
+  }
+  hangupRemaining.value = Math.floor(remain);
+  hangupRunning.value = hangupRemaining.value > 0;
+  if (Number.isFinite(elapsed) && elapsed >= 0) {
+    hangupElapsed.value = Math.floor(elapsed);
+  }
+  return true;
 };
 
 const formatTime = (seconds) => {
@@ -437,6 +940,16 @@ onMounted(() => {
   }
 });
 
+watch(
+  dailySettings,
+  () => {
+    const key = dailySettingsKey();
+    if (!key) return;
+    localStorage.setItem(key, JSON.stringify(dailySettings));
+  },
+  { deep: true }
+);
+
 onBeforeUnmount(() => {
   clearInterval(statusTimer);
   clearInterval(helperTimer);
@@ -453,6 +966,7 @@ const helperTimer = setInterval(() => {
 const hangupTimer = setInterval(() => {
   if (hangupRunning.value && hangupRemaining.value > 0) {
     hangupRemaining.value = Math.max(0, hangupRemaining.value - 1);
+    hangupElapsed.value = Math.max(0, hangupElapsed.value + 1);
     if (hangupRemaining.value === 0) hangupRunning.value = false;
   }
 }, 1000);
@@ -556,13 +1070,20 @@ const hangupTimer = setInterval(() => {
   backdrop-filter: blur(8px);
 }
 
+.cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  gap: 10px;
+  width: 100%;
+  margin-top: 8px;
+}
+
 .card {
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.78);
   border: 1px solid rgba(148, 163, 184, 0.45);
   padding: 18px;
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
-  max-width: 520px;
 }
 
 .card-title {
@@ -591,13 +1112,11 @@ const hangupTimer = setInterval(() => {
 }
 
 .helper-card {
-  max-width: 520px;
-  margin-top: 8px;
+  margin-top: 0;
 }
 
 .hangup-card {
-  max-width: 520px;
-  margin-top: 10px;
+  margin-top: 0;
 }
 
 .card-header-line {
@@ -639,6 +1158,65 @@ const hangupTimer = setInterval(() => {
 .helper-actions {
   display: flex;
   gap: 8px;
+}
+
+.team-refresh-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.daily-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.daily-run-btn {
+  padding: 5px 12px;
+  font-size: 12px;
+  border-radius: 8px;
+}
+
+.daily-card .progress-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: #334155;
+  margin-bottom: 6px;
+}
+
+.daily-card .progress-value {
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.daily-card .progress-rail {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.2);
+  overflow: hidden;
+  box-shadow: inset 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.daily-card .progress-bar {
+  height: 100%;
+  background: linear-gradient(120deg, #22c55e, #16a34a);
+  border-radius: inherit;
+  transition: width 0.25s ease;
+}
+
+.daily-card .progress-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.tower-overview {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
 }
 
 .primary {
@@ -711,14 +1289,110 @@ const hangupTimer = setInterval(() => {
   border-color: rgba(248, 113, 113, 0.5);
 }
 
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.35);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 80;
+}
+
+.modal-panel {
+  width: min(92vw, 420px);
+  max-height: 80vh;
+  overflow: auto;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.22);
+  padding: 14px;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.modal-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.close-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.modal-body {
+  display: grid;
+  gap: 10px;
+}
+
+.setting-row {
+  display: grid;
+  gap: 4px;
+}
+
+.setting-row label {
+  font-size: 12px;
+  color: #475569;
+}
+
+.setting-row select {
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.6);
+  background: #fff;
+  color: #0f172a;
+  padding: 0 10px;
+}
+
+.switch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #334155;
+  padding: 2px 0;
+}
+
+.switch-row input {
+  width: 16px;
+  height: 16px;
+}
+
+@media (max-width: 900px) {
+  .cards-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 720px) {
   .header {
     flex-direction: column;
     align-items: flex-start;
   }
 
-  .card {
+  .helper-body {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .helper-actions {
     width: 100%;
+  }
+
+  .helper-actions .primary,
+  .helper-actions .ghost {
+    width: 100%;
+    text-align: center;
   }
 }
 

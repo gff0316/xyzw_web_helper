@@ -1,6 +1,8 @@
 package com.xyzw.webhelper.xyzw;
 
 import com.xyzw.webhelper.xyzw.dto.XyzwBottleRequest;
+import com.xyzw.webhelper.xyzw.dto.XyzwDailyTaskRequest;
+import com.xyzw.webhelper.xyzw.dto.XyzwTeamRequest;
 import com.xyzw.webhelper.xyzw.dto.XyzwWsConnectRequest;
 import com.xyzw.webhelper.xyzw.ws.XyzwWsManager;
 import org.slf4j.Logger;
@@ -13,13 +15,20 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/xyzw/ws")
 public class XyzwWsController {
     private static final Logger logger = LoggerFactory.getLogger(XyzwWsController.class);
+    private static final long CONNECT_TIMEOUT_MS = 3000;
+
     private final XyzwWsManager wsManager;
 
     public XyzwWsController(XyzwWsManager wsManager) {
@@ -29,12 +38,12 @@ public class XyzwWsController {
     @PostMapping("/connect")
     public ResponseEntity<Map<String, Object>> connect(@RequestBody XyzwWsConnectRequest request) {
         String token = request.getToken();
-        if (token == null || token.trim().isEmpty()) {
+        if (isBlank(token)) {
             return ResponseEntity.badRequest().body(build(false, "token 不能为空", null));
         }
 
         String wsUrl = request.getWsUrl();
-        if (wsUrl == null || wsUrl.trim().isEmpty()) {
+        if (isBlank(wsUrl)) {
             wsUrl = buildDefaultWsUrl(token);
         }
 
@@ -48,7 +57,7 @@ public class XyzwWsController {
     @PostMapping("/disconnect")
     public ResponseEntity<Map<String, Object>> disconnect(@RequestBody XyzwWsConnectRequest request) {
         String token = request.getToken();
-        if (token == null || token.trim().isEmpty()) {
+        if (isBlank(token)) {
             return ResponseEntity.badRequest().body(build(false, "token 不能为空", null));
         }
         wsManager.disconnect(token);
@@ -58,18 +67,13 @@ public class XyzwWsController {
     @PostMapping("/bottlehelper/restart")
     public ResponseEntity<Map<String, Object>> restartBottle(@RequestBody XyzwBottleRequest request) {
         String token = request.getToken();
-        if (token == null || token.trim().isEmpty()) {
+        if (isBlank(token)) {
             return ResponseEntity.badRequest().body(build(false, "token 不能为空", null));
         }
+
         int bottleType = request.getBottleType() == null ? 0 : request.getBottleType();
-        if (!wsManager.isConnected(token)) {
-            String wsUrl = buildDefaultWsUrl(token);
-            logger.info("收到重启罐子请求，先建立 WebSocket。bottleType={}, wsUrl={}", bottleType, wsUrl);
-            wsManager.connect(token, wsUrl);
-            if (!waitForConnection(token, 3000)) {
-                logger.warn("重启罐子失败：WebSocket 连接超时。bottleType={}, wsUrl={}", bottleType, wsUrl);
-                return ResponseEntity.badRequest().body(build(false, "WebSocket 连接失败", null));
-            }
+        if (!ensureConnected(token)) {
+            return ResponseEntity.badRequest().body(build(false, "WebSocket 连接失败", null));
         }
 
         logger.info("WebSocket 已连接，发送重启罐子指令。bottleType={}", bottleType);
@@ -90,19 +94,16 @@ public class XyzwWsController {
         @RequestParam("token") String token,
         @RequestParam(value = "refresh", required = false, defaultValue = "false") boolean refresh
     ) {
-        if (token == null || token.trim().isEmpty()) {
+        if (isBlank(token)) {
             return ResponseEntity.badRequest().body(build(false, "token 不能为空", null));
         }
+
         logger.info("身份牌查询开始 refresh={} token={}", refresh, token);
 
         if (refresh) {
-            if (!wsManager.isConnected(token)) {
-                String wsUrl = buildDefaultWsUrl(token);
-                wsManager.connect(token, wsUrl);
-                if (!waitForConnection(token, 3000)) {
-                    logger.warn("身份牌查询失败：WebSocket 连接超时 token={}", token);
-                    return ResponseEntity.badRequest().body(build(false, "WebSocket 连接失败", null));
-                }
+            if (!ensureConnected(token)) {
+                logger.warn("身份牌查询失败：WebSocket 连接超时 token={}", token);
+                return ResponseEntity.badRequest().body(build(false, "WebSocket 连接失败", null));
             }
             try {
                 wsManager.requestRoleInfo(token);
@@ -136,37 +137,372 @@ public class XyzwWsController {
         return ResponseEntity.ok(build(true, "success", data));
     }
 
+    @GetMapping("/team/info")
+    public ResponseEntity<Map<String, Object>> teamInfo(
+        @RequestParam("token") String token,
+        @RequestParam(value = "refresh", required = false, defaultValue = "true") boolean refresh
+    ) {
+        if (isBlank(token)) {
+            return ResponseEntity.badRequest().body(build(false, "token 不能为空", null));
+        }
+        if (!ensureConnected(token)) {
+            logger.warn("阵容查询失败：WebSocket 连接超时 token={}", token);
+            return ResponseEntity.badRequest().body(build(false, "WebSocket 连接失败", null));
+        }
+
+        long beforeVersion = wsManager.getTeamInfoVersion(token);
+        if (refresh) {
+            try {
+                wsManager.requestTeamInfo(token);
+            } catch (IllegalStateException ex) {
+                logger.warn("阵容查询失败：{}", ex.getMessage());
+                return ResponseEntity.badRequest().body(build(false, ex.getMessage(), null));
+            }
+        }
+
+        Map<String, Object> data = buildTeamData(token, beforeVersion, refresh ? 5000 : 0);
+        return ResponseEntity.ok(build(true, "success", data));
+    }
+
+    @PostMapping("/team/switch")
+    public ResponseEntity<Map<String, Object>> switchTeam(@RequestBody XyzwTeamRequest request) {
+        String token = request.getToken();
+        Integer teamId = request.getTeamId();
+        if (isBlank(token)) {
+            return ResponseEntity.badRequest().body(build(false, "token 不能为空", null));
+        }
+        if (teamId == null || teamId < 1 || teamId > 4) {
+            return ResponseEntity.badRequest().body(build(false, "teamId 必须在 1 到 4 之间", null));
+        }
+        if (!ensureConnected(token)) {
+            logger.warn("切换阵容失败：WebSocket 连接超时 token={} teamId={}", token, teamId);
+            return ResponseEntity.badRequest().body(build(false, "WebSocket 连接失败", null));
+        }
+
+        long beforeVersion = wsManager.getTeamInfoVersion(token);
+        try {
+            wsManager.switchTeam(token, teamId);
+        } catch (IllegalStateException ex) {
+            logger.warn("切换阵容失败：{}", ex.getMessage());
+            return ResponseEntity.badRequest().body(build(false, ex.getMessage(), null));
+        }
+
+        Map<String, Object> data = buildTeamData(token, beforeVersion, 5000);
+        data.put("requestedTeamId", teamId);
+        return ResponseEntity.ok(build(true, "success", data));
+    }
+
+    @GetMapping("/tower/info")
+    public ResponseEntity<Map<String, Object>> towerInfo(
+        @RequestParam("token") String token,
+        @RequestParam(value = "refresh", required = false, defaultValue = "true") boolean refresh
+    ) {
+        if (isBlank(token)) {
+            return ResponseEntity.badRequest().body(build(false, "token 不能为空", null));
+        }
+        if (!ensureConnected(token)) {
+            logger.warn("咸将塔查询失败：WebSocket 连接超时 token={}", token);
+            return ResponseEntity.badRequest().body(build(false, "WebSocket 连接失败", null));
+        }
+
+        long beforeTowerVersion = wsManager.getTowerInfoVersion(token);
+        if (refresh) {
+            try {
+                wsManager.requestTowerInfo(token);
+            } catch (IllegalStateException ex) {
+                logger.warn("咸将塔查询失败：{}", ex.getMessage());
+                return ResponseEntity.badRequest().body(build(false, ex.getMessage(), null));
+            }
+        }
+
+        Map<String, Object> data = buildTowerData(token, beforeTowerVersion, refresh ? 5000 : 0);
+        return ResponseEntity.ok(build(true, "success", data));
+    }
+
+    @PostMapping("/tower/challenge")
+    public ResponseEntity<Map<String, Object>> towerChallenge(@RequestBody XyzwBottleRequest request) {
+        String token = request.getToken();
+        if (isBlank(token)) {
+            return ResponseEntity.badRequest().body(build(false, "token 不能为空", null));
+        }
+        if (!ensureConnected(token)) {
+            logger.warn("发起咸将塔挑战失败：WebSocket 连接超时 token={}", token);
+            return ResponseEntity.badRequest().body(build(false, "WebSocket 连接失败", null));
+        }
+
+        long beforeTowerVersion = wsManager.getTowerInfoVersion(token);
+        try {
+            wsManager.startTowerChallenge(token);
+        } catch (IllegalStateException ex) {
+            logger.warn("发起咸将塔挑战失败：{}", ex.getMessage());
+            return ResponseEntity.badRequest().body(build(false, ex.getMessage(), null));
+        }
+
+        Map<String, Object> data = buildTowerData(token, beforeTowerVersion, 6000);
+        return ResponseEntity.ok(build(true, "success", data));
+    }
+
     @PostMapping("/hangup/extend")
     public ResponseEntity<Map<String, Object>> extendHangup(@RequestBody XyzwBottleRequest request) {
         String token = request.getToken();
-        if (token == null || token.trim().isEmpty()) {
+        if (isBlank(token)) {
             return ResponseEntity.badRequest().body(build(false, "token 不能为空", null));
         }
-        if (!wsManager.isConnected(token)) {
-            String wsUrl = buildDefaultWsUrl(token);
-            wsManager.connect(token, wsUrl);
-            if (!waitForConnection(token, 3000)) {
-                logger.warn("挂机加钟失败：WebSocket 连接超时 token={}", token);
-                return ResponseEntity.badRequest().body(build(false, "WebSocket 连接失败", null));
-            }
+        if (!ensureConnected(token)) {
+            logger.warn("挂机加钟失败：WebSocket 连接超时 token={}", token);
+            return ResponseEntity.badRequest().body(build(false, "WebSocket 连接失败", null));
         }
+
+        long beforeVersion = wsManager.getRoleInfoVersion(token);
         try {
             wsManager.extendHangUp(token);
         } catch (IllegalStateException ex) {
             logger.warn("挂机加钟失败：{}", ex.getMessage());
             return ResponseEntity.badRequest().body(build(false, ex.getMessage(), null));
         }
-        return ResponseEntity.ok(build(true, "success", null));
+
+        Map<String, Object> data = buildHangupData(token, beforeVersion, 6000);
+        return ResponseEntity.ok(build(true, "success", data));
+    }
+
+    @PostMapping("/hangup/claim")
+    public ResponseEntity<Map<String, Object>> claimHangupReward(@RequestBody XyzwBottleRequest request) {
+        String token = request.getToken();
+        if (isBlank(token)) {
+            return ResponseEntity.badRequest().body(build(false, "token 不能为空", null));
+        }
+        if (!ensureConnected(token)) {
+            logger.warn("领取挂机奖励失败：WebSocket 连接超时 token={}", token);
+            return ResponseEntity.badRequest().body(build(false, "WebSocket 连接失败", null));
+        }
+
+        long beforeVersion = wsManager.getRoleInfoVersion(token);
+        try {
+            wsManager.claimHangUpReward(token);
+        } catch (IllegalStateException ex) {
+            logger.warn("领取挂机奖励失败：{}", ex.getMessage());
+            return ResponseEntity.badRequest().body(build(false, ex.getMessage(), null));
+        }
+
+        Map<String, Object> data = buildHangupData(token, beforeVersion, 6000);
+        return ResponseEntity.ok(build(true, "success", data));
+    }
+
+    @GetMapping("/hangup/remaining")
+    public ResponseEntity<Map<String, Object>> hangupRemaining(@RequestParam("token") String token) {
+        if (isBlank(token)) {
+            return ResponseEntity.badRequest().body(build(false, "token 不能为空", null));
+        }
+        if (!ensureConnected(token)) {
+            logger.warn("查询挂机剩余时间失败：WebSocket 连接超时 token={}", token);
+            return ResponseEntity.badRequest().body(build(false, "WebSocket 连接失败", null));
+        }
+
+        long beforeVersion = wsManager.getRoleInfoVersion(token);
+        try {
+            wsManager.requestRoleInfo(token);
+        } catch (IllegalStateException ex) {
+            logger.warn("查询挂机剩余时间失败：{}", ex.getMessage());
+            return ResponseEntity.badRequest().body(build(false, ex.getMessage(), null));
+        }
+
+        Map<String, Object> data = buildHangupData(token, beforeVersion, 6000);
+        return ResponseEntity.ok(build(true, "success", data));
+    }
+
+    @PostMapping("/daily/run")
+    public ResponseEntity<Map<String, Object>> runDailyTasks(@RequestBody XyzwDailyTaskRequest request) {
+        String token = request.getToken();
+        if (isBlank(token)) {
+            return ResponseEntity.badRequest().body(build(false, "token 不能为空", null));
+        }
+        if (!ensureConnected(token)) {
+            logger.warn("执行每日任务失败：WebSocket 连接超时 token={}", token);
+            return ResponseEntity.badRequest().body(build(false, "WebSocket 连接失败", null));
+        }
+
+        XyzwDailyTaskRequest.DailySettings settings = request.getSettings();
+        boolean claimBottle = settings == null || settings.getClaimBottle() == null || settings.getClaimBottle();
+        boolean payRecruit = settings != null && Boolean.TRUE.equals(settings.getPayRecruit());
+        boolean openBox = settings == null || settings.getOpenBox() == null || settings.getOpenBox();
+        boolean arenaEnable = settings != null && settings.getArenaEnable() != null && settings.getArenaEnable();
+        boolean claimHangUp = settings == null || settings.getClaimHangUp() == null || settings.getClaimHangUp();
+        boolean claimEmail = settings == null || settings.getClaimEmail() == null || settings.getClaimEmail();
+        boolean blackMarketPurchase = settings != null && Boolean.TRUE.equals(settings.getBlackMarketPurchase());
+        int arenaFormation = normalizeTeamId(settings == null ? null : settings.getArenaFormation());
+        int bossFormation = normalizeTeamId(settings == null ? null : settings.getBossFormation());
+        int bossTimes = normalizeBossTimes(settings == null ? null : settings.getBossTimes());
+
+        List<String> executed = new ArrayList<String>();
+        long roleVersionBefore = wsManager.getRoleInfoVersion(token);
+
+        try {
+            // 基础：分享、送金币、招募、点金
+            sendDaily(token, executed, "system_mysharecallback", mapOf("isSkipShareCard", true, "type", 2), 250);
+            sendDaily(token, executed, "friend_batch", mapOf(), 250);
+            sendDaily(token, executed, "hero_recruit", mapOf("recruitType", 3, "recruitNumber", 1), 300);
+            if (payRecruit) {
+                sendDaily(token, executed, "hero_recruit", mapOf("recruitType", 1, "recruitNumber", 1), 300);
+            }
+            sendDaily(token, executed, "system_buygold", mapOf("buyNum", 1), 220);
+            sendDaily(token, executed, "system_buygold", mapOf("buyNum", 1), 220);
+            sendDaily(token, executed, "system_buygold", mapOf("buyNum", 1), 220);
+
+            // 挂机
+            if (claimHangUp) {
+                sendDaily(token, executed, "system_claimhangupreward", mapOf(), 250);
+                sendDaily(token, executed, "system_mysharecallback", mapOf("isSkipShareCard", true, "type", 2), 200);
+                sendDaily(token, executed, "system_mysharecallback", mapOf("isSkipShareCard", true, "type", 2), 200);
+                sendDaily(token, executed, "system_mysharecallback", mapOf("isSkipShareCard", true, "type", 2), 200);
+                sendDaily(token, executed, "system_mysharecallback", mapOf("isSkipShareCard", true, "type", 2), 200);
+            }
+
+            // 罐子
+            sendDaily(token, executed, "bottlehelper_stop", mapOf("bottleType", 0), 200);
+            sendDaily(token, executed, "bottlehelper_start", mapOf("bottleType", 0), 250);
+            if (claimBottle) {
+                sendDaily(token, executed, "bottlehelper_claim", mapOf("bottleType", 0), 250);
+            }
+
+            // 宝箱
+            if (openBox) {
+                sendDaily(token, executed, "item_openbox", mapOf("itemId", 2001, "number", 10), 250);
+            }
+
+            // 竞技场
+            if (arenaEnable) {
+                sendDaily(token, executed, "presetteam_saveteam", mapOf("teamId", arenaFormation), 350);
+                sendDaily(token, executed, "arena_startarea", mapOf(), 350);
+                long version = wsManager.getCommandVersion(token, "arena_getareatargetresp");
+                sendDaily(token, executed, "arena_getareatarget", mapOf(), 300);
+                Object arenaResp = wsManager.waitForCommandUpdated(token, "arena_getareatargetresp", version, 3000);
+                Long targetId = pickArenaTargetId(arenaResp);
+                if (targetId != null && targetId > 0) {
+                    sendDaily(token, executed, "fight_startareaarena", mapOf("targetId", targetId), 700);
+                } else {
+                    logger.info("每日任务竞技场：未获取到目标，跳过战斗 token={}", token);
+                }
+            }
+
+            // BOSS（简化版）
+            if (bossTimes > 0) {
+                sendDaily(token, executed, "presetteam_saveteam", mapOf("teamId", bossFormation), 350);
+                for (int i = 0; i < bossTimes; i++) {
+                    sendDaily(token, executed, "fight_startlegionboss", mapOf(), 900);
+                }
+            }
+
+            // 邮件、黑市
+            if (claimEmail) {
+                sendDaily(token, executed, "mail_claimallattachment", mapOf(), 250);
+            }
+            if (blackMarketPurchase) {
+                sendDaily(token, executed, "store_purchase", mapOf("goodsId", 1), 300);
+            }
+
+            // 任务奖励
+            for (int taskId = 1; taskId <= 10; taskId++) {
+                sendDaily(token, executed, "task_claimdailypoint", mapOf("taskId", taskId), 180);
+            }
+            sendDaily(token, executed, "task_claimdailyreward", mapOf(), 250);
+            sendDaily(token, executed, "task_claimweekreward", mapOf(), 250);
+
+            // 刷新角色信息，仅用于每日任务进度同步
+            wsManager.requestRoleInfo(token);
+            Map<String, Object> updatedRole = wsManager.waitForRoleInfoUpdated(token, roleVersionBefore, 5000);
+            if (updatedRole == null) {
+                updatedRole = wsManager.getRoleInfo(token);
+            }
+
+            Map<String, Object> data = new HashMap<String, Object>();
+            data.put("executedCount", executed.size());
+            data.put("executedCommands", executed);
+            Integer dailyPoint = extractDailyPoint(updatedRole);
+            if (dailyPoint != null) {
+                data.put("dailyPoint", dailyPoint);
+            }
+            return ResponseEntity.ok(build(true, "success", data));
+        } catch (Exception ex) {
+            logger.warn("执行每日任务失败 token={} msg={}", token, ex.getMessage(), ex);
+            return ResponseEntity.badRequest().body(build(false, "执行每日任务失败: " + ex.getMessage(), null));
+        }
+    }
+
+    private Map<String, Object> buildHangupData(String token, long beforeVersion, long timeoutMs) {
+        Map<String, Object> updated = wsManager.waitForRoleInfoUpdated(token, beforeVersion, timeoutMs);
+        Map<String, Object> roleInfo = updated != null ? updated : wsManager.getRoleInfo(token);
+
+        Map<String, Object> data = new HashMap<String, Object>();
+        Long remainingSeconds = wsManager.extractHangUpRemainingSeconds(roleInfo);
+        Long elapsedSeconds = wsManager.extractHangUpElapsedSeconds(roleInfo);
+        Long totalSeconds = wsManager.extractHangUpTotalSeconds(roleInfo);
+        if (remainingSeconds != null) {
+            data.put("remainingSeconds", remainingSeconds);
+        }
+        if (elapsedSeconds != null) {
+            data.put("elapsedSeconds", elapsedSeconds);
+        }
+        if (totalSeconds != null) {
+            data.put("totalSeconds", totalSeconds);
+        }
+        return data;
+    }
+
+    private Map<String, Object> buildTeamData(String token, long beforeVersion, long timeoutMs) {
+        Map<String, Object> updated = timeoutMs > 0
+            ? wsManager.waitForTeamInfoUpdated(token, beforeVersion, timeoutMs)
+            : null;
+        Map<String, Object> teamInfo = updated != null ? updated : wsManager.getTeamInfo(token);
+
+        Map<String, Object> data = new HashMap<String, Object>();
+        if (teamInfo != null) {
+            data.put("teamInfo", teamInfo);
+            Integer currentTeamId = extractUseTeamId(teamInfo);
+            if (currentTeamId != null) {
+                data.put("currentTeamId", currentTeamId);
+            }
+        }
+        return data;
+    }
+
+    private Map<String, Object> buildTowerData(
+        String token,
+        long beforeTowerVersion,
+        long timeoutMs
+    ) {
+        Map<String, Object> towerUpdated = timeoutMs > 0
+            ? wsManager.waitForTowerInfoUpdated(token, beforeTowerVersion, timeoutMs)
+            : null;
+        Map<String, Object> roleInfo = wsManager.getRoleInfo(token);
+        Map<String, Object> towerInfo = towerUpdated != null ? towerUpdated : wsManager.getTowerInfo(token);
+
+        Map<String, Object> data = new HashMap<String, Object>();
+        Long towerId = wsManager.extractTowerId(roleInfo, towerInfo);
+        Long energy = wsManager.extractTowerEnergy(roleInfo, towerInfo);
+
+        data.put("towerId", towerId == null ? 0L : towerId);
+        data.put("energy", energy == null ? 0L : energy);
+        data.put("floor", formatTowerFloor(towerId));
+        return data;
     }
 
     private String buildDefaultWsUrl(String token) {
         try {
             return "wss://xxz-xyzw.hortorgames.com/agent?p=" +
-                java.net.URLEncoder.encode(token, "UTF-8") +
+                URLEncoder.encode(token, "UTF-8") +
                 "&e=x&lang=chinese";
-        } catch (java.io.UnsupportedEncodingException ex) {
+        } catch (UnsupportedEncodingException ex) {
             throw new IllegalStateException("不支持的编码 UTF-8", ex);
         }
+    }
+
+    private boolean ensureConnected(String token) {
+        if (wsManager.isConnected(token)) {
+            return true;
+        }
+        String wsUrl = buildDefaultWsUrl(token);
+        wsManager.connect(token, wsUrl);
+        return waitForConnection(token, CONNECT_TIMEOUT_MS);
     }
 
     private Map<String, Object> build(boolean success, String message, Object data) {
@@ -193,5 +529,192 @@ public class XyzwWsController {
             }
         }
         return false;
+    }
+
+    private Integer extractUseTeamId(Map<String, Object> teamInfo) {
+        Integer direct = asInt(teamInfo.get("useTeamId"));
+        if (direct != null) {
+            return direct;
+        }
+        Object nested = findByKey(teamInfo, "useTeamId");
+        return asInt(nested);
+    }
+
+    private Object findByKey(Object node, String key) {
+        if (node instanceof Map) {
+            Map<?, ?> map = (Map<?, ?>) node;
+            if (map.containsKey(key)) {
+                return map.get(key);
+            }
+            for (Object value : map.values()) {
+                Object found = findByKey(value, key);
+                if (found != null) {
+                    return found;
+                }
+            }
+        } else if (node instanceof List) {
+            for (Object item : (List<?>) node) {
+                Object found = findByKey(item, key);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
+    }
+
+    private Integer asInt(Object value) {
+        if (value instanceof Number) {
+            return ((Number) value).intValue();
+        }
+        if (value instanceof String) {
+            try {
+                return Integer.parseInt((String) value);
+            } catch (NumberFormatException ex) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private String formatTowerFloor(Long towerId) {
+        if (towerId == null || towerId < 0) {
+            return "0 - 0";
+        }
+        long floor = (towerId / 10) + 1;
+        long layer = (towerId % 10) + 1;
+        return floor + " - " + layer;
+    }
+
+    private void sendDaily(String token, List<String> executed, String cmd, Map<String, Object> body, long delayMs) {
+        wsManager.sendCommand(token, cmd, body);
+        executed.add(cmd);
+        if (delayMs > 0) {
+            try {
+                Thread.sleep(delayMs);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("任务执行被中断");
+            }
+        }
+    }
+
+    private Integer extractDailyPoint(Map<String, Object> roleInfo) {
+        if (roleInfo == null) {
+            return null;
+        }
+        Object roleObj = roleInfo.get("role");
+        if (!(roleObj instanceof Map)) {
+            return null;
+        }
+        Object dailyTaskObj = ((Map<?, ?>) roleObj).get("dailyTask");
+        if (!(dailyTaskObj instanceof Map)) {
+            return null;
+        }
+        Object pointObj = ((Map<?, ?>) dailyTaskObj).get("dailyPoint");
+        if (pointObj instanceof Number) {
+            return ((Number) pointObj).intValue();
+        }
+        if (pointObj instanceof String) {
+            try {
+                return Integer.parseInt((String) pointObj);
+            } catch (NumberFormatException ex) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private Long pickArenaTargetId(Object arenaResp) {
+        if (!(arenaResp instanceof Map)) {
+            return null;
+        }
+        Object body = ((Map<?, ?>) arenaResp).get("body");
+        Object source = body != null ? body : arenaResp;
+        return findTargetId(source);
+    }
+
+    private Long findTargetId(Object node) {
+        if (node instanceof Map) {
+            Map<?, ?> map = (Map<?, ?>) node;
+            Long roleId = asLong(map.get("roleId"));
+            if (roleId != null) {
+                return roleId;
+            }
+            Long targetId = asLong(map.get("targetId"));
+            if (targetId != null) {
+                return targetId;
+            }
+            Long id = asLong(map.get("id"));
+            if (id != null) {
+                return id;
+            }
+            for (Object value : map.values()) {
+                Long found = findTargetId(value);
+                if (found != null) {
+                    return found;
+                }
+            }
+        } else if (node instanceof List) {
+            for (Object item : (List<?>) node) {
+                Long found = findTargetId(item);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
+    }
+
+    private Long asLong(Object value) {
+        if (value instanceof Number) {
+            return ((Number) value).longValue();
+        }
+        if (value instanceof String) {
+            try {
+                return Long.parseLong((String) value);
+            } catch (NumberFormatException ex) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private int normalizeTeamId(Integer teamId) {
+        if (teamId == null || teamId < 1 || teamId > 4) {
+            return 1;
+        }
+        return teamId;
+    }
+
+    private int normalizeBossTimes(Integer times) {
+        if (times == null || times < 0) {
+            return 0;
+        }
+        if (times > 4) {
+            return 4;
+        }
+        return times;
+    }
+
+    private Map<String, Object> mapOf() {
+        return new LinkedHashMap<String, Object>();
+    }
+
+    private Map<String, Object> mapOf(String key1, Object value1) {
+        Map<String, Object> map = new LinkedHashMap<String, Object>();
+        map.put(key1, value1);
+        return map;
+    }
+
+    private Map<String, Object> mapOf(String key1, Object value1, String key2, Object value2) {
+        Map<String, Object> map = new LinkedHashMap<String, Object>();
+        map.put(key1, value1);
+        map.put(key2, value2);
+        return map;
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
     }
 }

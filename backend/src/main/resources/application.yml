@@ -19,6 +19,9 @@ mybatis:
     log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
 
 logging:
+  charset:
+    console: UTF-8
+    file: UTF-8
   level:
     com.xyzw.webhelper: INFO
     org.mybatis: DEBUG
