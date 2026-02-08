@@ -1,4 +1,4 @@
-﻿package com.xyzw.webhelper.xyzw.ws;
+package com.xyzw.webhelper.xyzw.ws;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 @Component
 public class XyzwWsManager {
@@ -66,7 +67,7 @@ public class XyzwWsManager {
         scheduler.schedule(() -> {
             client.sendCommand("bottlehelper_start", buildBottleBody(bottleType));
             client.sendCommand("role_getroleinfo", buildRoleInfoBody());
-        }, 500, java.util.concurrent.TimeUnit.MILLISECONDS);
+        }, 500, TimeUnit.MILLISECONDS);
     }
 
     public void requestRoleInfo(String key) {
@@ -90,8 +91,11 @@ public class XyzwWsManager {
         for (int i = 0; i < 4; i++) {
             client.sendCommand("system_mysharecallback", body);
         }
-        scheduler.schedule(() -> client.sendCommand("role_getroleinfo", buildRoleInfoBody()),
-            1200, java.util.concurrent.TimeUnit.MILLISECONDS);
+        scheduler.schedule(
+            () -> client.sendCommand("role_getroleinfo", buildRoleInfoBody()),
+            1200,
+            TimeUnit.MILLISECONDS
+        );
     }
 
     public Map<String, Object> getRoleInfo(String key) {
@@ -136,9 +140,9 @@ public class XyzwWsManager {
             @SuppressWarnings("unchecked")
             Map<String, Object> roleInfo = (Map<String, Object>) body;
             roleInfos.put(key, roleInfo);
-            logger.info("宸叉帴鏀惰韩浠界墝淇℃伅 token={}", key);
+            logger.info("收到身份牌数据 token={}", key);
         } else if (cmd != null && !cmd.isEmpty()) {
-            logger.debug("鏀跺埌 WebSocket 鎸囦护 cmd={} token={}", cmd, key);
+            logger.debug("收到 WebSocket 消息 cmd={} token={}", cmd, key);
         }
     }
 }

@@ -1,4 +1,4 @@
-﻿package com.xyzw.webhelper.xyzw;
+package com.xyzw.webhelper.xyzw;
 
 import com.xyzw.webhelper.xyzw.dto.XyzwBottleRequest;
 import com.xyzw.webhelper.xyzw.dto.XyzwWsConnectRequest;
@@ -30,7 +30,7 @@ public class XyzwWsController {
     public ResponseEntity<Map<String, Object>> connect(@RequestBody XyzwWsConnectRequest request) {
         String token = request.getToken();
         if (token == null || token.trim().isEmpty()) {
-            return ResponseEntity.badRequest().body(build(false, "token 涓嶈兘涓虹┖", null));
+            return ResponseEntity.badRequest().body(build(false, "token 不能为空", null));
         }
 
         String wsUrl = request.getWsUrl();
@@ -49,7 +49,7 @@ public class XyzwWsController {
     public ResponseEntity<Map<String, Object>> disconnect(@RequestBody XyzwWsConnectRequest request) {
         String token = request.getToken();
         if (token == null || token.trim().isEmpty()) {
-            return ResponseEntity.badRequest().body(build(false, "token 涓嶈兘涓虹┖", null));
+            return ResponseEntity.badRequest().body(build(false, "token 不能为空", null));
         }
         wsManager.disconnect(token);
         return ResponseEntity.ok(build(true, "success", null));
@@ -59,19 +59,20 @@ public class XyzwWsController {
     public ResponseEntity<Map<String, Object>> restartBottle(@RequestBody XyzwBottleRequest request) {
         String token = request.getToken();
         if (token == null || token.trim().isEmpty()) {
-            return ResponseEntity.badRequest().body(build(false, "token 涓嶈兘涓虹┖", null));
+            return ResponseEntity.badRequest().body(build(false, "token 不能为空", null));
         }
         int bottleType = request.getBottleType() == null ? 0 : request.getBottleType();
         if (!wsManager.isConnected(token)) {
             String wsUrl = buildDefaultWsUrl(token);
-            logger.info("閺€璺哄煂闁插秴鎯庣純鎰摍鐠囬攱鐪伴敍灞藉帥瀵よ櫣鐝?WebSocket閵嗕繝ottleType={}, wsUrl={}", bottleType, wsUrl);
+            logger.info("收到重启罐子请求，先建立 WebSocket。bottleType={}, wsUrl={}", bottleType, wsUrl);
             wsManager.connect(token, wsUrl);
             if (!waitForConnection(token, 3000)) {
-                logger.warn("闁插秴鎯庣純鎰摍婢惰精瑙﹂敍姝恊bSocket 鏉╃偞甯寸搾鍛閵嗕繝ottleType={}, wsUrl={}", bottleType, wsUrl);
-                return ResponseEntity.badRequest().body(build(false, "WebSocket 鏉╃偞甯存径杈Е", null));
+                logger.warn("重启罐子失败：WebSocket 连接超时。bottleType={}, wsUrl={}", bottleType, wsUrl);
+                return ResponseEntity.badRequest().body(build(false, "WebSocket 连接失败", null));
             }
         }
-        logger.info("WebSocket 瀹歌尪绻涢幒銉礉閸欐垿鈧線鍣搁崥顖滅秷鐎涙劖瀵氭禒銈冣偓淇爋ttleType={}", bottleType);
+
+        logger.info("WebSocket 已连接，发送重启罐子指令。bottleType={}", bottleType);
         wsManager.sendBottleHelperRestart(token, bottleType);
         return ResponseEntity.ok(build(true, "success", null));
     }
@@ -90,25 +91,27 @@ public class XyzwWsController {
         @RequestParam(value = "refresh", required = false, defaultValue = "false") boolean refresh
     ) {
         if (token == null || token.trim().isEmpty()) {
-            return ResponseEntity.badRequest().body(build(false, "token 涓嶈兘涓虹┖", null));
+            return ResponseEntity.badRequest().body(build(false, "token 不能为空", null));
         }
-        logger.info("韬唤鐗屾煡璇㈠紑濮?refresh={} token={}", refresh, token);
+        logger.info("身份牌查询开始 refresh={} token={}", refresh, token);
+
         if (refresh) {
             if (!wsManager.isConnected(token)) {
                 String wsUrl = buildDefaultWsUrl(token);
                 wsManager.connect(token, wsUrl);
                 if (!waitForConnection(token, 3000)) {
-                    logger.warn("韬唤鐗屾煡璇㈠け璐ワ細WebSocket 杩炴帴瓒呮椂 token={}", token);
-                    return ResponseEntity.badRequest().body(build(false, "WebSocket 鏉╃偞甯存径杈Е", null));
+                    logger.warn("身份牌查询失败：WebSocket 连接超时 token={}", token);
+                    return ResponseEntity.badRequest().body(build(false, "WebSocket 连接失败", null));
                 }
             }
             try {
                 wsManager.requestRoleInfo(token);
             } catch (IllegalStateException ex) {
-                logger.warn("韬唤鐗屾煡璇㈠け璐ワ細{}", ex.getMessage());
+                logger.warn("身份牌查询失败：{}", ex.getMessage());
                 return ResponseEntity.badRequest().body(build(false, ex.getMessage(), null));
             }
         }
+
         Map<String, Object> roleInfo = wsManager.getRoleInfo(token);
         if (roleInfo == null && refresh) {
             roleInfo = wsManager.waitForRoleInfo(token, 5000);
@@ -117,19 +120,43 @@ public class XyzwWsController {
                     wsManager.requestRoleInfo(token);
                     roleInfo = wsManager.waitForRoleInfo(token, 3000);
                 } catch (IllegalStateException ex) {
-                    logger.warn("韬唤鐗屾煡璇㈠け璐ワ細{}", ex.getMessage());
+                    logger.warn("身份牌查询失败：{}", ex.getMessage());
                     return ResponseEntity.badRequest().body(build(false, ex.getMessage(), null));
                 }
             }
         }
+
         Map<String, Object> data = new HashMap<String, Object>();
         if (roleInfo != null) {
             data.put("roleInfo", roleInfo);
-            logger.info("韬唤鐗屾煡璇㈡垚鍔?token={}", token);
+            logger.info("身份牌查询成功 token={}", token);
         } else {
-            logger.warn("韬唤鐗屾煡璇㈢粨鏋滀负绌?token={}", token);
+            logger.warn("身份牌查询结果为空 token={}", token);
         }
         return ResponseEntity.ok(build(true, "success", data));
+    }
+
+    @PostMapping("/hangup/extend")
+    public ResponseEntity<Map<String, Object>> extendHangup(@RequestBody XyzwBottleRequest request) {
+        String token = request.getToken();
+        if (token == null || token.trim().isEmpty()) {
+            return ResponseEntity.badRequest().body(build(false, "token 不能为空", null));
+        }
+        if (!wsManager.isConnected(token)) {
+            String wsUrl = buildDefaultWsUrl(token);
+            wsManager.connect(token, wsUrl);
+            if (!waitForConnection(token, 3000)) {
+                logger.warn("挂机加钟失败：WebSocket 连接超时 token={}", token);
+                return ResponseEntity.badRequest().body(build(false, "WebSocket 连接失败", null));
+            }
+        }
+        try {
+            wsManager.extendHangUp(token);
+        } catch (IllegalStateException ex) {
+            logger.warn("挂机加钟失败：{}", ex.getMessage());
+            return ResponseEntity.badRequest().body(build(false, ex.getMessage(), null));
+        }
+        return ResponseEntity.ok(build(true, "success", null));
     }
 
     private String buildDefaultWsUrl(String token) {
@@ -138,7 +165,7 @@ public class XyzwWsController {
                 java.net.URLEncoder.encode(token, "UTF-8") +
                 "&e=x&lang=chinese";
         } catch (java.io.UnsupportedEncodingException ex) {
-            throw new IllegalStateException("涓嶆敮鎸佺殑缂栫爜 UTF-8", ex);
+            throw new IllegalStateException("不支持的编码 UTF-8", ex);
         }
     }
 
@@ -166,28 +193,5 @@ public class XyzwWsController {
             }
         }
         return false;
-    }
-
-    @PostMapping("/hangup/extend")
-    public ResponseEntity<Map<String, Object>> extendHangup(@RequestBody XyzwBottleRequest request) {
-        String token = request.getToken();
-        if (token == null || token.trim().isEmpty()) {
-            return ResponseEntity.badRequest().body(build(false, "token 涓嶈兘涓虹┖", null));
-        }
-        if (!wsManager.isConnected(token)) {
-            String wsUrl = buildDefaultWsUrl(token);
-            wsManager.connect(token, wsUrl);
-            if (!waitForConnection(token, 3000)) {
-                logger.warn("鎸傛満鍔犻挓澶辫触锛歐ebSocket 杩炴帴瓒呮椂 token={}", token);
-                return ResponseEntity.badRequest().body(build(false, "WebSocket 鏉╃偞甯存径杈Е", null));
-            }
-        }
-        try {
-            wsManager.extendHangUp(token);
-        } catch (IllegalStateException ex) {
-            logger.warn("鎸傛満鍔犻挓澶辫触锛歿}}", ex.getMessage());
-            return ResponseEntity.badRequest().body(build(false, ex.getMessage(), null));
-        }
-        return ResponseEntity.ok(build(true, "success", null));
     }
 }

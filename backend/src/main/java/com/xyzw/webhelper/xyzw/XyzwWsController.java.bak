@@ -1,4 +1,4 @@
-﻿package com.xyzw.webhelper.xyzw;
+package com.xyzw.webhelper.xyzw;
 
 import com.xyzw.webhelper.xyzw.dto.XyzwBottleRequest;
 import com.xyzw.webhelper.xyzw.dto.XyzwWsConnectRequest;
