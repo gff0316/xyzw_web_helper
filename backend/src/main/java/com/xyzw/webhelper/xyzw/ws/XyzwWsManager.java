@@ -396,6 +396,12 @@ public class XyzwWsManager {
     }
 
     private void recordCommandBody(String key, String cmd, Object body) {
+        if (cmd == null || cmd.trim().isEmpty()) {
+            return;
+        }
+        if (body == null) {
+            return;
+        }
         String cacheKey = commandKey(key, cmd);
         commandBodies.put(cacheKey, body);
         commandVersions.put(cacheKey, System.currentTimeMillis());

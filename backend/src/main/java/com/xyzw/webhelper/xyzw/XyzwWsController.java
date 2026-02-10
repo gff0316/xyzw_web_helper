@@ -1,6 +1,7 @@
 package com.xyzw.webhelper.xyzw;
 
 import com.xyzw.webhelper.xyzw.dto.XyzwBottleRequest;
+import com.xyzw.webhelper.xyzw.dto.XyzwCarRequest;
 import com.xyzw.webhelper.xyzw.dto.XyzwDailyTaskRequest;
 import com.xyzw.webhelper.xyzw.dto.XyzwTeamRequest;
 import com.xyzw.webhelper.xyzw.dto.XyzwWsConnectRequest;
@@ -135,6 +136,146 @@ public class XyzwWsController {
             logger.warn("身份牌查询结果为空 token={}", token);
         }
         return ResponseEntity.ok(build(true, "success", data));
+    }
+
+    @GetMapping("/legion/info")
+    public ResponseEntity<Map<String, Object>> legionInfo(
+        @RequestParam("token") String token,
+        @RequestParam(value = "refresh", required = false, defaultValue = "true") boolean refresh
+    ) {
+        if (isBlank(token)) {
+            return ResponseEntity.badRequest().body(build(false, "token 不能为空", null));
+        }
+        if (!ensureConnected(token)) {
+            logger.warn("俱乐部信息查询失败：WebSocket 连接超时 token={}", token);
+            return ResponseEntity.badRequest().body(build(false, "WebSocket 连接失败", null));
+        }
+
+        long beforeInfo = wsManager.getCommandVersion(token, "legion_getinforesp");
+        long beforeInfoR = wsManager.getCommandVersion(token, "legion_getinforresp");
+        if (refresh) {
+            logger.info("发送俱乐部信息请求 token={}", token);
+            wsManager.sendCommand(token, "legion_getinfo", new LinkedHashMap<String, Object>());
+        }
+
+        Object body = wsManager.waitForCommandUpdated(token, "legion_getinforesp", beforeInfo, 5000);
+        if (body == null) {
+            body = wsManager.waitForCommandUpdated(token, "legion_getinforresp", beforeInfoR, 3000);
+        }
+
+        Map<String, Object> data = new HashMap<String, Object>();
+        data.put("legionInfo", body);
+        return ResponseEntity.ok(build(true, "success", data));
+    }
+
+    @PostMapping("/legion/signin")
+    public ResponseEntity<Map<String, Object>> legionSignIn(@RequestBody XyzwWsConnectRequest request) {
+        String token = request.getToken();
+        if (isBlank(token)) {
+            return ResponseEntity.badRequest().body(build(false, "token 不能为空", null));
+        }
+        if (!ensureConnected(token)) {
+            logger.warn("俱乐部签到失败：WebSocket 连接超时 token={}", token);
+            return ResponseEntity.badRequest().body(build(false, "WebSocket 连接失败", null));
+        }
+        logger.info("发送俱乐部签到请求 token={}", token);
+        wsManager.sendCommand(token, "legion_signin", new LinkedHashMap<String, Object>());
+        return ResponseEntity.ok(build(true, "success", null));
+    }
+
+    @GetMapping("/clubcar/list")
+    public ResponseEntity<Map<String, Object>> clubCarList(
+        @RequestParam("token") String token,
+        @RequestParam(value = "refresh", required = false, defaultValue = "true") boolean refresh
+    ) {
+        if (isBlank(token)) {
+            return ResponseEntity.badRequest().body(build(false, "token 不能为空", null));
+        }
+        if (!ensureConnected(token)) {
+            logger.warn("俱乐部赛车查询失败：WebSocket 连接超时 token={}", token);
+            return ResponseEntity.badRequest().body(build(false, "WebSocket 连接失败", null));
+        }
+
+        long before = wsManager.getCommandVersion(token, "car_getrolecarresp");
+        long beforeAlt = wsManager.getCommandVersion(token, "car_getrolecar");
+        if (refresh) {
+            logger.info("发送俱乐部赛车查询 token={}", token);
+            wsManager.sendCommand(token, "car_getrolecar", new LinkedHashMap<String, Object>());
+        }
+        Object body = wsManager.waitForCommandUpdated(token, "car_getrolecarresp", before, 5000);
+        if (body == null) {
+            body = wsManager.waitForCommandUpdated(token, "car_getrolecar", beforeAlt, 3000);
+        }
+
+        Map<String, Object> data = new HashMap<String, Object>();
+        data.put("cars", body);
+        return ResponseEntity.ok(build(true, "success", data));
+    }
+
+    @PostMapping("/clubcar/refresh")
+    public ResponseEntity<Map<String, Object>> refreshClubCar(@RequestBody XyzwCarRequest request) {
+        String token = request.getToken();
+        Long carId = request.getCarId();
+        if (isBlank(token)) {
+            return ResponseEntity.badRequest().body(build(false, "token 不能为空", null));
+        }
+        if (carId == null) {
+            return ResponseEntity.badRequest().body(build(false, "carId 不能为空", null));
+        }
+        if (!ensureConnected(token)) {
+            logger.warn("刷新赛车失败：WebSocket 连接超时 token={}", token);
+            return ResponseEntity.badRequest().body(build(false, "WebSocket 连接失败", null));
+        }
+        Map<String, Object> body = new LinkedHashMap<String, Object>();
+        body.put("carId", String.valueOf(carId));
+        logger.info("刷新赛车 token={} carId={}", token, carId);
+        wsManager.sendCommand(token, "car_refresh", body);
+        return ResponseEntity.ok(build(true, "success", null));
+    }
+
+    @PostMapping("/clubcar/send")
+    public ResponseEntity<Map<String, Object>> sendClubCar(@RequestBody XyzwCarRequest request) {
+        String token = request.getToken();
+        Long carId = request.getCarId();
+        if (isBlank(token)) {
+            return ResponseEntity.badRequest().body(build(false, "token 不能为空", null));
+        }
+        if (carId == null) {
+            return ResponseEntity.badRequest().body(build(false, "carId 不能为空", null));
+        }
+        if (!ensureConnected(token)) {
+            logger.warn("发车失败：WebSocket 连接超时 token={}", token);
+            return ResponseEntity.badRequest().body(build(false, "WebSocket 连接失败", null));
+        }
+        Map<String, Object> body = new LinkedHashMap<String, Object>();
+        body.put("carId", String.valueOf(carId));
+        body.put("helperId", request.getHelperId() == null ? 0 : request.getHelperId());
+        body.put("text", request.getText() == null ? "" : request.getText());
+        body.put("isUpgrade", request.getIsUpgrade() != null && request.getIsUpgrade());
+        logger.info("发车 token={} carId={}", token, carId);
+        wsManager.sendCommand(token, "car_send", body);
+        return ResponseEntity.ok(build(true, "success", null));
+    }
+
+    @PostMapping("/clubcar/claim")
+    public ResponseEntity<Map<String, Object>> claimClubCar(@RequestBody XyzwCarRequest request) {
+        String token = request.getToken();
+        Long carId = request.getCarId();
+        if (isBlank(token)) {
+            return ResponseEntity.badRequest().body(build(false, "token 不能为空", null));
+        }
+        if (carId == null) {
+            return ResponseEntity.badRequest().body(build(false, "carId 不能为空", null));
+        }
+        if (!ensureConnected(token)) {
+            logger.warn("收车失败：WebSocket 连接超时 token={}", token);
+            return ResponseEntity.badRequest().body(build(false, "WebSocket 连接失败", null));
+        }
+        Map<String, Object> body = new LinkedHashMap<String, Object>();
+        body.put("carId", String.valueOf(carId));
+        logger.info("收车 token={} carId={}", token, carId);
+        wsManager.sendCommand(token, "car_claim", body);
+        return ResponseEntity.ok(build(true, "success", null));
     }
 
     @GetMapping("/team/info")
