@@ -17,6 +17,10 @@ public interface XyzwUserTokenMapper {
 
     List<XyzwUserToken> findByBinId(@Param("binId") Long binId);
 
+    List<XyzwUserToken> findAll();
+
+    int updateToken(XyzwUserToken token);
+
     int deleteByIdAndUserId(@Param("id") Long id, @Param("userId") Long userId);
 
     int deleteByBinIdAndUserId(@Param("binId") Long binId, @Param("userId") Long userId);

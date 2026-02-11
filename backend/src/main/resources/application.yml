@@ -26,3 +26,16 @@ logging:
     com.xyzw.webhelper: INFO
     org.mybatis: DEBUG
     org.apache.ibatis: DEBUG
+
+xxl:
+  job:
+    admin:
+      addresses: http://192.168.0.252:8901/xxl-job-admin
+    accessToken:
+    executor:
+      appname: xyzw
+      address:
+      ip:
+      port: 9999
+      logpath: logs/xxl-job/jobhandler
+      logretentiondays: 30

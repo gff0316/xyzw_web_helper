@@ -44,6 +44,10 @@ public class XyzwProfileService {
         if (binData == null || binData.length == 0) {
             throw new IllegalArgumentException("bin file required");
         }
+        String trimmedName = name == null ? "" : name.trim();
+        if (trimmedName.isEmpty()) {
+            throw new IllegalArgumentException("bin name required");
+        }
         LOGGER.info("saveBin start userId={} fileName={} bytes={}", userId, fileName, binData.length);
         String safeFileName = fileName == null ? "bin.dat" : fileName.replaceAll("[^a-zA-Z0-9._-]", "_");
         String uniqueName = System.currentTimeMillis() + "_" + safeFileName;
@@ -59,7 +63,7 @@ public class XyzwProfileService {
 
         XyzwUserBin bin = new XyzwUserBin();
         bin.setUserId(userId);
-        bin.setName(name == null ? "" : name.trim());
+        bin.setName(trimmedName);
         bin.setFilePath(storedFile.toString());
         bin.setRemark(remark == null ? "" : remark.trim());
         LocalDateTime now = LocalDateTime.now();
@@ -74,11 +78,11 @@ public class XyzwProfileService {
         List<XyzwUserBin> bins = binMapper.findByUserId(userId);
         List<XyzwUserToken> tokens = tokenMapper.findByUserId(userId);
         LOGGER.info("listBins userId={} bins={} tokens={}", userId, bins.size(), tokens.size());
-        Map<Long, List<XyzwTokenRecordResponse>> tokenMap = new HashMap<Long, List<XyzwTokenRecordResponse>>();
+        Map<Long, XyzwTokenRecordResponse> tokenMap = new HashMap<Long, XyzwTokenRecordResponse>();
         for (XyzwUserToken token : tokens) {
-            XyzwTokenRecordResponse response = toTokenResponse(token);
-            List<XyzwTokenRecordResponse> list = tokenMap.computeIfAbsent(token.getBinId(), key -> new ArrayList<XyzwTokenRecordResponse>());
-            list.add(response);
+            if (!tokenMap.containsKey(token.getBinId())) {
+                tokenMap.put(token.getBinId(), toTokenResponse(token));
+            }
         }
 
         List<XyzwBinResponse> result = new ArrayList<XyzwBinResponse>();
@@ -89,7 +93,13 @@ public class XyzwProfileService {
             response.setFilePath(bin.getFilePath());
             response.setRemark(bin.getRemark());
             response.setCreatedAt(bin.getCreatedAt());
-            response.setTokens(tokenMap.getOrDefault(bin.getId(), new ArrayList<XyzwTokenRecordResponse>()));
+            List<XyzwTokenRecordResponse> tokenList = new ArrayList<XyzwTokenRecordResponse>();
+            XyzwTokenRecordResponse token = tokenMap.get(bin.getId());
+            if (token != null) {
+                token.setName(bin.getName());
+                tokenList.add(token);
+            }
+            response.setTokens(tokenList);
             result.add(response);
         }
         return result;
@@ -101,31 +111,42 @@ public class XyzwProfileService {
             throw new IllegalArgumentException("bin not found");
         }
         LOGGER.info("createToken start userId={} binId={}", userId, binId);
-        byte[] tokenBytes;
-        try {
-            tokenBytes = Files.readAllBytes(Paths.get(bin.getFilePath()));
-        } catch (IOException ex) {
-            LOGGER.error("createToken read bin failed userId={} binId={} filePath={}", userId, binId, bin.getFilePath(), ex);
-            throw new IllegalStateException("read bin file failed", ex);
+        XyzwTokenRecordResponse response = refreshTokenForBin(bin);
+        LOGGER.info("createToken success userId={} binId={} tokenId={}", userId, binId, response.getId());
+        return response;
+    }
+
+    public XyzwTokenRecordResponse refreshToken(Long userId, Long binId) {
+        XyzwUserBin bin = binMapper.findByIdAndUserId(binId, userId);
+        if (bin == null) {
+            throw new IllegalArgumentException("bin not found");
         }
-        tokenBytes = tokenService.fetchTokenBytes(tokenBytes);
-        String encodedToken = Base64.getEncoder().encodeToString(tokenBytes);
-        XyzwUserToken token = new XyzwUserToken();
-        token.setUserId(userId);
-        token.setBinId(binId);
-        token.setUuid(UUID.randomUUID().toString());
-        token.setToken(encodedToken);
-        if (request != null) {
-            token.setName(trimOrNull(request.getName()));
-            token.setServer(trimOrNull(request.getServer()));
-            token.setWsUrl(trimOrNull(request.getWsUrl()));
+        LOGGER.info("refreshToken start userId={} binId={}", userId, binId);
+        XyzwTokenRecordResponse response = refreshTokenForBin(bin);
+        LOGGER.info("refreshToken success userId={} binId={} tokenId={}", userId, binId, response.getId());
+        return response;
+    }
+
+    public int refreshAllTokens() {
+        List<XyzwUserBin> bins = binMapper.findAll();
+        if (bins == null || bins.isEmpty()) {
+            LOGGER.info("refreshAllTokens no bins");
+            return 0;
         }
-        LocalDateTime now = LocalDateTime.now();
-        token.setCreatedAt(now);
-        token.setUpdatedAt(now);
-        tokenMapper.insert(token);
-        LOGGER.info("createToken success userId={} binId={} tokenId={}", userId, binId, token.getId());
-        return toTokenResponse(token);
+        int refreshed = 0;
+        for (XyzwUserBin bin : bins) {
+            if (bin == null) {
+                continue;
+            }
+            try {
+                refreshTokenForBin(bin);
+                refreshed += 1;
+            } catch (Exception ex) {
+                LOGGER.warn("refreshAllTokens failed binId={} reason={}", bin.getId(), ex.getMessage());
+            }
+        }
+        LOGGER.info("refreshAllTokens done count={}", refreshed);
+        return refreshed;
     }
 
     public XyzwTokenRecordResponse getToken(Long userId, String uuid) {
@@ -190,5 +211,53 @@ public class XyzwProfileService {
         }
         String trimmed = value.trim();
         return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private XyzwTokenRecordResponse refreshTokenForBin(XyzwUserBin bin) {
+        byte[] tokenBytes;
+        try {
+            tokenBytes = Files.readAllBytes(Paths.get(bin.getFilePath()));
+        } catch (IOException ex) {
+            LOGGER.error("refreshToken read bin failed userId={} binId={} filePath={}", bin.getUserId(), bin.getId(), bin.getFilePath(), ex);
+            throw new IllegalStateException("read bin file failed", ex);
+        }
+        tokenBytes = tokenService.fetchTokenBytes(tokenBytes);
+        String encodedToken = Base64.getEncoder().encodeToString(tokenBytes);
+
+        List<XyzwUserToken> existingTokens = tokenMapper.findByBinId(bin.getId());
+        XyzwUserToken token;
+        LocalDateTime now = LocalDateTime.now();
+        if (existingTokens != null && !existingTokens.isEmpty()) {
+            token = existingTokens.get(0);
+            token.setUserId(bin.getUserId());
+            token.setBinId(bin.getId());
+            token.setName(trimOrNull(bin.getName()));
+            token.setToken(encodedToken);
+            token.setServer(null);
+            token.setWsUrl(null);
+            token.setUpdatedAt(now);
+            tokenMapper.updateToken(token);
+            if (existingTokens.size() > 1) {
+                for (int i = 1; i < existingTokens.size(); i++) {
+                    XyzwUserToken extra = existingTokens.get(i);
+                    if (extra != null && extra.getId() != null) {
+                        tokenMapper.deleteByIdAndUserId(extra.getId(), bin.getUserId());
+                    }
+                }
+            }
+        } else {
+            token = new XyzwUserToken();
+            token.setUserId(bin.getUserId());
+            token.setBinId(bin.getId());
+            token.setUuid(UUID.randomUUID().toString());
+            token.setName(trimOrNull(bin.getName()));
+            token.setToken(encodedToken);
+            token.setServer(null);
+            token.setWsUrl(null);
+            token.setCreatedAt(now);
+            token.setUpdatedAt(now);
+            tokenMapper.insert(token);
+        }
+        return toTokenResponse(token);
     }
 }

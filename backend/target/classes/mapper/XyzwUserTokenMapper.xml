@@ -37,6 +37,20 @@
     SELECT * FROM user_tokens WHERE bin_id = #{binId} ORDER BY created_at DESC
   </select>
 
+  <select id="findAll" resultMap="XyzwUserTokenResult">
+    SELECT * FROM user_tokens ORDER BY created_at DESC
+  </select>
+
+  <update id="updateToken" parameterType="com.xyzw.webhelper.xyzw.XyzwUserToken">
+    UPDATE user_tokens
+    SET name = #{name},
+        token = #{token},
+        server = #{server},
+        ws_url = #{wsUrl},
+        updated_at = #{updatedAt}
+    WHERE id = #{id} AND user_id = #{userId}
+  </update>
+
   <delete id="deleteByIdAndUserId">
     DELETE FROM user_tokens WHERE id = #{id} AND user_id = #{userId}
   </delete>

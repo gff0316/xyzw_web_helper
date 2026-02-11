@@ -13,5 +13,7 @@ public interface XyzwUserBinMapper {
 
     List<XyzwUserBin> findByUserId(@Param("userId") Long userId);
 
+    List<XyzwUserBin> findAll();
+
     int deleteByIdAndUserId(@Param("id") Long id, @Param("userId") Long userId);
 }

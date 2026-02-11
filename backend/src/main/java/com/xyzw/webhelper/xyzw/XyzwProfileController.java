@@ -61,6 +61,10 @@ public class XyzwProfileController {
             LOGGER.warn("uploadBin missing file for userId={}", user.getId());
             return ResponseEntity.badRequest().body(build(false, "bin file required", null));
         }
+        if (name == null || name.trim().isEmpty()) {
+            LOGGER.warn("uploadBin missing name userId={}", user.getId());
+            return ResponseEntity.badRequest().body(build(false, "bin name required", null));
+        }
         LOGGER.info("uploadBin start userId={} fileName={} size={}", user.getId(), file.getOriginalFilename(), file.getSize());
         XyzwUserBin saved = profileService.saveBin(
             user.getId(),
@@ -112,6 +116,27 @@ public class XyzwProfileController {
             return ResponseEntity.ok(build(true, "success", response));
         } catch (IllegalArgumentException ex) {
             LOGGER.warn("createToken failed userId={} binId={} reason={}", user.getId(), binId, ex.getMessage());
+            return ResponseEntity.badRequest().body(build(false, ex.getMessage(), null));
+        }
+    }
+
+    @PostMapping("/bins/{binId}/token/refresh")
+    public ResponseEntity<Map<String, Object>> refreshToken(
+        @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authHeader,
+        @PathVariable("binId") Long binId
+    ) {
+        AuthResponse user = resolveUser(authHeader);
+        if (user == null) {
+            LOGGER.warn("refreshToken unauthorized binId={}", binId);
+            return ResponseEntity.status(401).body(build(false, "unauthorized", null));
+        }
+        try {
+            LOGGER.info("refreshToken start userId={} binId={}", user.getId(), binId);
+            XyzwTokenRecordResponse response = profileService.refreshToken(user.getId(), binId);
+            LOGGER.info("refreshToken success userId={} binId={} tokenId={}", user.getId(), binId, response.getId());
+            return ResponseEntity.ok(build(true, "success", response));
+        } catch (IllegalArgumentException ex) {
+            LOGGER.warn("refreshToken failed userId={} binId={} reason={}", user.getId(), binId, ex.getMessage());
             return ResponseEntity.badRequest().body(build(false, ex.getMessage(), null));
         }
     }

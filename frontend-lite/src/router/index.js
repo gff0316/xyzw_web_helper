@@ -5,6 +5,7 @@ import ProfilePage from "../pages/DashboardPage.vue";
 import GamePage from "../pages/GamePage.vue";
 import UploadBinPage from "../pages/UploadBinPage.vue";
 import WxLoginPage from "../pages/WxLoginPage.vue";
+import BatchDailyPage from "../pages/BatchDailyPage.vue";
 
 const routes = [
   { path: "/", redirect: "/profile" },
@@ -42,6 +43,12 @@ const routes = [
     path: "/game/:tokenId?",
     name: "Game",
     component: GamePage,
+    meta: { requiresAuth: true },
+  },
+  {
+    path: "/batch-daily",
+    name: "BatchDaily",
+    component: BatchDailyPage,
     meta: { requiresAuth: true },
   },
 ];

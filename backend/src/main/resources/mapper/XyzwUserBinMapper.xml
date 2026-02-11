@@ -27,6 +27,11 @@
     FROM user_bins WHERE user_id = #{userId} ORDER BY created_at DESC
   </select>
 
+  <select id="findAll" resultMap="XyzwUserBinResult">
+    SELECT id, user_id, name, file_path, remark, created_at, updated_at
+    FROM user_bins ORDER BY created_at DESC
+  </select>
+
   <delete id="deleteByIdAndUserId">
     DELETE FROM user_bins WHERE id = #{id} AND user_id = #{userId}
   </delete>

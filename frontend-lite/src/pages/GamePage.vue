@@ -15,6 +15,9 @@
           <button class="ghost" type="button" @click="router.push('/profile')">
             个人信息管理
           </button>
+          <button class="ghost" type="button" @click="router.push('/batch-daily')">
+            批量日常
+          </button>
         </div>
       </div>
 

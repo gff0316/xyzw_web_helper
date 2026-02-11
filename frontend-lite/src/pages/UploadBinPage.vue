@@ -92,6 +92,12 @@ const handleFileChange = (event) => {
 
 const handleUploadBin = async () => {
   if (!(await ensureAuth())) return;
+  const trimmedName = form.value.name ? form.value.name.trim() : "";
+  if (!trimmedName) {
+    statusMessage.value = "请输入名称。";
+    statusIsError.value = true;
+    return;
+  }
   if (!binFile.value) {
     statusMessage.value = "请选择 bin 文件。";
     statusIsError.value = true;
@@ -103,7 +109,7 @@ const handleUploadBin = async () => {
   try {
     const formData = new FormData();
     formData.append("file", binFile.value);
-    formData.append("name", form.value.name || "未命名账号");
+    formData.append("name", trimmedName);
 
     const response = await fetch("/api/v1/xyzw/bins", {
       method: "POST",

@@ -29,6 +29,9 @@
           <button class="ghost" type="button" @click="router.push('/wx-login')">
             微信扫码登录
           </button>
+          <button class="ghost" type="button" @click="router.push('/batch-daily')">
+            批量日常
+          </button>
           <button class="ghost" type="button" @click="fetchBins">刷新</button>
         </div>
       </div>
@@ -71,23 +74,17 @@
               </div>
 
               <div class="token-form">
-                <input
-                  v-model="getTokenForm(bin.id).name"
-                  placeholder="Token 名称（可选）"
-                />
-                <input
-                  v-model="getTokenForm(bin.id).server"
-                  placeholder="服务器（可选）"
-                />
-                <input
-                  v-model="getTokenForm(bin.id).wsUrl"
-                  placeholder="WS 地址（可选）"
-                />
                 <button
                   :disabled="actionLoading"
                   @click="handleCreateToken(bin.id)"
                 >
                   生成 Token
+                </button>
+                <button
+                  :disabled="actionLoading || !hasToken(bin)"
+                  @click="handleRefreshToken(bin.id)"
+                >
+                  刷新 Token
                 </button>
               </div>
 
@@ -103,10 +100,9 @@
                   >
                     <div class="token-info">
                       <div class="token-title">
-                        {{ token.name || token.uuid }}
+                        {{ token.name || formatBinName(bin) || token.uuid }}
                       </div>
                       <div class="token-meta">
-                        {{ token.server || "无服务器" }} ·
                         {{ formatDate(token.createdAt) }}
                       </div>
                       <div class="token-value">
@@ -152,7 +148,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from "vue";
+import { ref, onMounted } from "vue";
 import { useRouter } from "vue-router";
 
 const router = useRouter();
@@ -170,7 +166,6 @@ const actionLoading = ref(false);
 const statusMessage = ref("");
 const statusType = ref("info");
 const expandedBinId = ref(null);
-const tokenForms = reactive({});
 
 const authHeaders = () =>
   authToken.value ? { Authorization: `Bearer ${authToken.value}` } : {};
@@ -207,6 +202,10 @@ const formatToken = (token) => {
   return `${token.slice(0, 8)}...${token.slice(-6)}`;
 };
 
+const hasToken = (bin) => {
+  return Array.isArray(bin?.tokens) && bin.tokens.length > 0;
+};
+
 const copyToken = async (token) => {
   try {
     await navigator.clipboard.writeText(token);
@@ -214,13 +213,6 @@ const copyToken = async (token) => {
   } catch (err) {
     setStatus("复制失败，请手动复制", "error");
   }
-};
-
-const getTokenForm = (binId) => {
-  if (!tokenForms[binId]) {
-    tokenForms[binId] = { name: "", server: "", wsUrl: "" };
-  }
-  return tokenForms[binId];
 };
 
 const toggleBin = (binId) => {
@@ -254,27 +246,39 @@ const handleCreateToken = async (binId) => {
   if (!ensureAuth()) return;
   actionLoading.value = true;
   try {
-    const form = getTokenForm(binId);
     const response = await fetch(`/api/v1/xyzw/bins/${binId}/token`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({
-        name: form.name || null,
-        server: form.server || null,
-        wsUrl: form.wsUrl || null,
-      }),
+      headers: { ...authHeaders() },
     });
     const payload = await response.json();
     if (!response.ok || !payload.success) {
       throw new Error(payload.message || "生成 Token 失败");
     }
     setStatus("Token 生成成功", "success");
-    form.name = "";
-    form.server = "";
-    form.wsUrl = "";
     await fetchBins();
   } catch (err) {
     setStatus(err.message || "生成 Token 失败", "error");
+  } finally {
+    actionLoading.value = false;
+  }
+};
+
+const handleRefreshToken = async (binId) => {
+  if (!ensureAuth()) return;
+  actionLoading.value = true;
+  try {
+    const response = await fetch(`/api/v1/xyzw/bins/${binId}/token/refresh`, {
+      method: "POST",
+      headers: { ...authHeaders() },
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.success) {
+      throw new Error(payload.message || "刷新 Token 失败");
+    }
+    setStatus("Token 已刷新", "success");
+    await fetchBins();
+  } catch (err) {
+    setStatus(err.message || "刷新 Token 失败", "error");
   } finally {
     actionLoading.value = false;
   }
@@ -543,17 +547,10 @@ onMounted(() => {
 }
 
 .token-form {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   margin-bottom: 12px;
-}
-
-.token-form input {
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid rgba(148, 163, 184, 0.6);
-  background: rgba(255, 255, 255, 0.9);
 }
 
 .token-form button {
