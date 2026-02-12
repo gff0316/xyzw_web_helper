@@ -30,3 +30,32 @@ CREATE TABLE IF NOT EXISTS user_tokens (
   created_at DATETIME NOT NULL,
   updated_at DATETIME NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS job_schedule_config (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  job_key VARCHAR(64) NOT NULL UNIQUE,
+  job_name VARCHAR(128) NOT NULL,
+  cron_expr VARCHAR(128) NOT NULL,
+  enabled TINYINT(1) NOT NULL DEFAULT 1,
+  updated_by VARCHAR(64) NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  KEY idx_job_schedule_config_enabled (enabled)
+);
+
+CREATE TABLE IF NOT EXISTS job_execution_log (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  job_key VARCHAR(64) NOT NULL,
+  job_name VARCHAR(128) NOT NULL,
+  trigger_type VARCHAR(32) NOT NULL,
+  trigger_source VARCHAR(64) NULL,
+  status VARCHAR(32) NOT NULL,
+  message VARCHAR(255) NULL,
+  details TEXT NULL,
+  duration_ms BIGINT NULL,
+  start_time DATETIME NOT NULL,
+  end_time DATETIME NULL,
+  created_at DATETIME NOT NULL,
+  KEY idx_job_execution_log_job_key_id (job_key, id),
+  KEY idx_job_execution_log_start_time (start_time)
+);

@@ -1,7 +1,5 @@
 package com.xyzw.webhelper.xyzw.batch;
 
-import com.xxl.job.core.biz.model.ReturnT;
-import com.xxl.job.core.handler.annotation.XxlJob;
 import com.xyzw.webhelper.xyzw.XyzwProfileService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,11 +14,10 @@ public class TokenRefreshXxlJob {
         this.profileService = profileService;
     }
 
-    @XxlJob("tokenRefreshRunner")
-    public ReturnT<String> run(String param) {
-        logger.info("xxl-job \u89e6\u53d1 tokenRefreshRunner param={}", param);
+    public String run(String triggerType, String triggerSource) {
+        logger.info("trigger tokenRefreshRunner triggerType={} triggerSource={}", triggerType, triggerSource);
         int refreshed = profileService.refreshAllTokens();
-        logger.info("xxl-job tokenRefreshRunner \u5b8c\u6210 refreshed={}", refreshed);
-        return ReturnT.SUCCESS;
+        logger.info("tokenRefreshRunner done refreshed={}", refreshed);
+        return "refreshed=" + refreshed;
     }
 }

@@ -31,14 +31,16 @@ public class BatchDailySchedulerService {
 
     private final BatchDailyTaskStore store;
     private final XyzwWsController wsController;
+    private final JobAuditService auditService;
     private final ObjectMapper mapper = new ObjectMapper();
     private final Map<Long, BatchDailyTask> tasks = new ConcurrentHashMap<Long, BatchDailyTask>();
     private final Set<Long> runningTasks = Collections.newSetFromMap(new ConcurrentHashMap<Long, Boolean>());
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
 
-    public BatchDailySchedulerService(BatchDailyTaskStore store, XyzwWsController wsController) {
+    public BatchDailySchedulerService(BatchDailyTaskStore store, XyzwWsController wsController, JobAuditService auditService) {
         this.store = store;
         this.wsController = wsController;
+        this.auditService = auditService;
     }
 
     @PostConstruct
@@ -141,6 +143,17 @@ public class BatchDailySchedulerService {
     }
 
     private void executeTask(BatchDailyTask task, String trigger) {
+        long startMs = System.currentTimeMillis();
+        Long logId = null;
+        if (auditService != null) {
+            logId = auditService.start(
+                "batchDailyTask",
+                task.getName() == null ? "批量日常任务" : task.getName(),
+                "TASK",
+                trigger,
+                "taskId=" + task.getId() + ", userId=" + task.getUserId()
+            );
+        }
         List<BatchDailyToken> tokens = task.getTokens() == null ? new ArrayList<BatchDailyToken>() : task.getTokens();
         int success = 0;
         int fail = 0;
@@ -171,6 +184,12 @@ public class BatchDailySchedulerService {
         task.setLastStatus(String.format("\u6210\u529f %d / \u5931\u8d25 %d", success, fail));
         task.setUpdatedAt(nowString());
         store.save(tasks.values());
+        if (auditService != null && logId != null) {
+            String status = fail == 0 ? "SUCCESS" : (success > 0 ? "PARTIAL" : "FAILED");
+            String message = String.format("success=%d fail=%d", success, fail);
+            String details = "taskId=" + task.getId() + ", trigger=" + trigger;
+            auditService.finish(logId, status, message, details, System.currentTimeMillis() - startMs);
+        }
         logger.info("\u6279\u91cf\u65e5\u5e38\u4efb\u52a1\u7ed3\u675f name={} success={} fail={}", task.getName(), success, fail);
     }
 

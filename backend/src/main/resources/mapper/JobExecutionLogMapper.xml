@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.xyzw.webhelper.xyzw.batch.JobExecutionLogMapper">
+  <resultMap id="JobExecutionLogResult" type="com.xyzw.webhelper.xyzw.batch.JobExecutionLog">
+    <id column="id" property="id" />
+    <result column="job_key" property="jobKey" />
+    <result column="job_name" property="jobName" />
+    <result column="trigger_type" property="triggerType" />
+    <result column="trigger_source" property="triggerSource" />
+    <result column="status" property="status" />
+    <result column="message" property="message" />
+    <result column="details" property="details" />
+    <result column="duration_ms" property="durationMs" />
+    <result column="start_time" property="startTime" />
+    <result column="end_time" property="endTime" />
+    <result column="created_at" property="createdAt" />
+  </resultMap>
+
+  <insert id="insert" parameterType="com.xyzw.webhelper.xyzw.batch.JobExecutionLog" useGeneratedKeys="true" keyProperty="id">
+    INSERT INTO job_execution_log (
+      job_key,
+      job_name,
+      trigger_type,
+      trigger_source,
+      status,
+      message,
+      details,
+      start_time,
+      created_at
+    ) VALUES (
+      #{jobKey},
+      #{jobName},
+      #{triggerType},
+      #{triggerSource},
+      #{status},
+      #{message},
+      #{details},
+      #{startTime},
+      #{createdAt}
+    )
+  </insert>
+
+  <update id="finish">
+    UPDATE job_execution_log
+    SET status = #{status},
+        message = #{message},
+        details = #{details},
+        duration_ms = #{durationMs},
+        end_time = #{endTime}
+    WHERE id = #{id}
+  </update>
+
+  <select id="listRecent" resultMap="JobExecutionLogResult">
+    SELECT * FROM job_execution_log
+    <where>
+      <if test="jobKey != null and jobKey != ''">
+        job_key = #{jobKey}
+      </if>
+    </where>
+    ORDER BY id DESC
+    LIMIT #{limit}
+  </select>
+</mapper>

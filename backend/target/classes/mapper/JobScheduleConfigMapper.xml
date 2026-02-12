@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.xyzw.webhelper.xyzw.batch.JobScheduleConfigMapper">
+  <resultMap id="JobScheduleConfigResult" type="com.xyzw.webhelper.xyzw.batch.JobScheduleConfig">
+    <id column="id" property="id" />
+    <result column="job_key" property="jobKey" />
+    <result column="job_name" property="jobName" />
+    <result column="cron_expr" property="cronExpr" />
+    <result column="enabled" property="enabled" />
+    <result column="updated_by" property="updatedBy" />
+    <result column="created_at" property="createdAt" />
+    <result column="updated_at" property="updatedAt" />
+  </resultMap>
+
+  <select id="findAll" resultMap="JobScheduleConfigResult">
+    SELECT * FROM job_schedule_config ORDER BY job_key ASC
+  </select>
+
+  <select id="findByJobKey" resultMap="JobScheduleConfigResult">
+    SELECT * FROM job_schedule_config WHERE job_key = #{jobKey} LIMIT 1
+  </select>
+
+  <insert id="insert" parameterType="com.xyzw.webhelper.xyzw.batch.JobScheduleConfig" useGeneratedKeys="true" keyProperty="id">
+    INSERT INTO job_schedule_config (
+      job_key,
+      job_name,
+      cron_expr,
+      enabled,
+      updated_by,
+      created_at,
+      updated_at
+    ) VALUES (
+      #{jobKey},
+      #{jobName},
+      #{cronExpr},
+      #{enabled},
+      #{updatedBy},
+      #{createdAt},
+      #{updatedAt}
+    )
+  </insert>
+
+  <update id="updateByJobKey">
+    UPDATE job_schedule_config
+    SET job_name = #{jobName},
+        cron_expr = #{cronExpr},
+        enabled = #{enabled},
+        updated_by = #{updatedBy},
+        updated_at = #{updatedAt}
+    WHERE job_key = #{jobKey}
+  </update>
+</mapper>
