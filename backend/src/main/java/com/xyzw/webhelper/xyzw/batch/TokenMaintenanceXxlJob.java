@@ -1,7 +1,5 @@
 package com.xyzw.webhelper.xyzw.batch;
 
-import com.xxl.job.core.biz.model.ReturnT;
-import com.xxl.job.core.handler.annotation.XxlJob;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -15,10 +13,9 @@ public class TokenMaintenanceXxlJob {
         this.maintenanceService = maintenanceService;
     }
 
-    @XxlJob("tokenMaintenanceRunner")
-    public ReturnT<String> run(String param) {
-        logger.info("xxl-job \u89e6\u53d1 tokenMaintenanceRunner param={}", param);
+    public String run(String triggerType, String triggerSource) {
+        logger.info("trigger tokenMaintenanceRunner triggerType={} triggerSource={}", triggerType, triggerSource);
         maintenanceService.runAllTokens();
-        return ReturnT.SUCCESS;
+        return "token maintenance finished";
     }
 }

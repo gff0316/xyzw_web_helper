@@ -27,15 +27,16 @@ logging:
     org.mybatis: DEBUG
     org.apache.ibatis: DEBUG
 
-xxl:
-  job:
-    admin:
-      addresses: http://192.168.0.252:8901/xxl-job-admin
-    accessToken:
-    executor:
-      appname: xyzw
-      address:
-      ip:
-      port: 9999
-      logpath: logs/xxl-job/jobhandler
-      logretentiondays: 30
+jobs:
+  dispatcher:
+    tick-ms: 10000
+  batch-daily:
+    enabled: true
+    cron: "0 10 12 * * *"
+  token-refresh:
+    enabled: true
+    cron: "0 30 3 */5 * *"
+  token-maintenance:
+    enabled: true
+    cron: "0 0 */5 * * *"
+    enable-bottle-restart: false

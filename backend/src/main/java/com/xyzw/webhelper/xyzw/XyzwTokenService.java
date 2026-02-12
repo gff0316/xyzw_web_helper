@@ -19,7 +19,7 @@ public class XyzwTokenService {
     public byte[] fetchTokenBytes(byte[] payload) {
         if (payload == null || payload.length == 0) {
             logger.warn("Token request payload is empty");
-            throw new IllegalArgumentException("bin鏂囦欢涓虹┖");
+            throw new IllegalArgumentException("bin\u6587\u4ef6\u4e3a\u7a7a");
         }
 
         String url = UriComponentsBuilder.fromHttpUrl(TOKEN_ENDPOINT)
@@ -37,7 +37,7 @@ public class XyzwTokenService {
         logger.info("Token endpoint response status: {}", response.getStatusCodeValue());
 
         if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
-            throw new IllegalArgumentException("鑾峰彇token澶辫触锛孒TTP鐘舵€佺爜: " + response.getStatusCodeValue());
+            throw new IllegalArgumentException("闁兼儳鍢茶ぐ鍣抩ken濠㈡儼绮剧憴锕傛晬鐎涙壍TP闁绘鍩栭埀顑胯兌閻? " + response.getStatusCodeValue());
         }
 
         logger.debug("Token response size: {}", response.getBody().length);

@@ -241,17 +241,64 @@
         </div>
 
         <div class="right-panel">
+          <div class="card scheduler-card">
+            <div class="card-header">
+              <div class="card-title">后端调度配置</div>
+              <button class="ghost" type="button" @click="fetchJobConfigs">
+                刷新
+              </button>
+            </div>
+            <div class="card-body">
+              <div v-if="jobConfigsLoading" class="card-empty">正在加载...</div>
+              <div v-else-if="jobConfigs.length === 0" class="card-empty">
+                暂无后端任务配置
+              </div>
+              <div v-else class="job-config-list">
+                <div
+                  v-for="cfg in jobConfigs"
+                  :key="cfg.jobKey"
+                  class="job-config-item"
+                >
+                  <div class="job-config-head">
+                    <div class="job-config-name">
+                      {{ cfg.jobName || cfg.jobKey }}
+                    </div>
+                    <label class="switch-row">
+                      <input type="checkbox" v-model="cfg.enabled" />
+                      <span>启用</span>
+                    </label>
+                  </div>
+                  <div class="job-config-body">
+                    <input v-model="cfg.cronExpr" placeholder="Cron 表达式" />
+                    <div class="job-config-actions">
+                      <button class="ghost" type="button" @click="saveJobConfig(cfg)">
+                        保存
+                      </button>
+                      <button class="ghost" type="button" @click="runBackendJob(cfg.jobKey)">
+                        立即执行
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="card log-card">
             <div class="card-header">
               <div class="card-title">执行日志</div>
-              <button class="ghost" type="button" @click="clearLogs">
-                清空
-              </button>
+              <div class="header-actions">
+                <button class="ghost" type="button" @click="fetchBackendLogs">
+                  刷新后端日志
+                </button>
+                <button class="ghost" type="button" @click="clearLogs">
+                  清空前端日志
+                </button>
+              </div>
             </div>
             <div class="card-body log-body">
-              <div v-if="logEntries.length === 0" class="card-empty">
-                暂无日志
-              </div>
+              <div class="sub-title">前端执行日志</div>
+              <div v-if="logEntries.length === 0" class="card-empty">暂无前端日志</div>
               <div v-else class="log-list">
                 <div
                   v-for="(entry, index) in logEntries"
@@ -261,6 +308,22 @@
                 >
                   <span class="log-time">{{ entry.time }}</span>
                   <span class="log-text">{{ entry.message }}</span>
+                </div>
+              </div>
+
+              <div class="sub-title">后端审计日志</div>
+              <div v-if="backendLogs.length === 0" class="card-empty">暂无后端日志</div>
+              <div v-else class="log-list">
+                <div
+                  v-for="item in backendLogs"
+                  :key="item.id"
+                  class="log-item"
+                  :class="normalizeBackendLogType(item.status)"
+                >
+                  <span class="log-time">{{ formatBackendLogTime(item.startTime) }}</span>
+                  <span class="log-text">
+                    [{{ item.jobKey }}] {{ item.status }} · {{ item.message || "ok" }}
+                  </span>
                 </div>
               </div>
             </div>
@@ -292,6 +355,9 @@ const logEntries = ref([]);
 const isRunning = ref(false);
 const stopRequested = ref(false);
 const scheduledTasks = ref([]);
+const jobConfigs = ref([]);
+const jobConfigsLoading = ref(false);
+const backendLogs = ref([]);
 
 const delaySettings = reactive({
   taskDelay: 500,
@@ -639,6 +705,97 @@ const runSchedule = async (task) => {
   }
 };
 
+const fetchJobConfigs = async () => {
+  if (!ensureAuth()) return;
+  jobConfigsLoading.value = true;
+  try {
+    const resp = await fetch("/api/v1/jobs/configs", {
+      headers: { ...authHeaders() },
+    });
+    const payload = await resp.json();
+    if (!resp.ok || !payload.success) {
+      throw new Error(payload.message || "获取后端调度配置失败");
+    }
+    jobConfigs.value = (payload?.data?.configs || []).map((item) => ({
+      ...item,
+      enabled: !!item.enabled,
+      cronExpr: item.cronExpr || "",
+    }));
+  } catch (error) {
+    addLog(error.message || "获取后端调度配置失败", "error");
+  } finally {
+    jobConfigsLoading.value = false;
+  }
+};
+
+const saveJobConfig = async (cfg) => {
+  if (!ensureAuth()) return;
+  try {
+    const resp = await fetch(`/api/v1/jobs/configs/${cfg.jobKey}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        cronExpr: cfg.cronExpr,
+        enabled: !!cfg.enabled,
+      }),
+    });
+    const payload = await resp.json();
+    if (!resp.ok || !payload.success) {
+      throw new Error(payload.message || "保存调度配置失败");
+    }
+    addLog(`已保存后端调度配置：${cfg.jobKey}`, "success");
+    await fetchJobConfigs();
+  } catch (error) {
+    addLog(error.message || "保存调度配置失败", "error");
+  }
+};
+
+const runBackendJob = async (jobKey) => {
+  if (!ensureAuth()) return;
+  try {
+    const resp = await fetch(`/api/v1/jobs/run/${jobKey}`, {
+      method: "POST",
+      headers: { ...authHeaders() },
+    });
+    const payload = await resp.json();
+    if (!resp.ok || !payload.success) {
+      throw new Error(payload.message || "触发后端任务失败");
+    }
+    addLog(`已触发后端任务：${jobKey}`, "success");
+    await fetchBackendLogs();
+  } catch (error) {
+    addLog(error.message || "触发后端任务失败", "error");
+  }
+};
+
+const fetchBackendLogs = async () => {
+  if (!ensureAuth()) return;
+  try {
+    const resp = await fetch("/api/v1/jobs/logs?limit=100", {
+      headers: { ...authHeaders() },
+    });
+    const payload = await resp.json();
+    if (!resp.ok || !payload.success) {
+      throw new Error(payload.message || "获取后端日志失败");
+    }
+    backendLogs.value = payload?.data?.logs || [];
+  } catch (error) {
+    addLog(error.message || "获取后端日志失败", "error");
+  }
+};
+
+const formatBackendLogTime = (value) => {
+  if (!value) return "--";
+  return String(value).replace("T", " ").replace(".000", "");
+};
+
+const normalizeBackendLogType = (status) => {
+  if (status === "SUCCESS") return "success";
+  if (status === "FAILED") return "error";
+  if (status === "PARTIAL") return "warning";
+  return "info";
+};
+
 watch(
   () => ({ ...dailySettings }),
   () => {
@@ -651,6 +808,8 @@ onMounted(() => {
   loadDailySettings();
   fetchTokens();
   fetchSchedules();
+  fetchJobConfigs();
+  fetchBackendLogs();
 });
 
 // no-op
@@ -934,9 +1093,58 @@ onMounted(() => {
   color: #64748b;
 }
 
+.job-config-list {
+  display: grid;
+  gap: 10px;
+}
+
+.job-config-item {
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  background: rgba(248, 250, 252, 0.8);
+  border-radius: 12px;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.job-config-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.job-config-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.job-config-body {
+  display: grid;
+  gap: 8px;
+}
+
+.job-config-body input {
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.6);
+}
+
+.job-config-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .log-body {
   max-height: 520px;
   overflow-y: auto;
+}
+
+.sub-title {
+  font-size: 12px;
+  color: #64748b;
+  font-weight: 600;
 }
 
 .log-list {
@@ -974,7 +1182,7 @@ onMounted(() => {
 }
 
 .right-panel .card {
-  height: 100%;
+  height: auto;
 }
 
 @media (max-width: 960px) {

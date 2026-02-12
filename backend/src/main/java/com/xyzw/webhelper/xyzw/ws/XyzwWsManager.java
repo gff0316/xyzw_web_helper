@@ -18,6 +18,8 @@ import java.util.concurrent.TimeUnit;
 @Component
 public class XyzwWsManager {
     private static final Logger logger = LoggerFactory.getLogger(XyzwWsManager.class);
+    private static final long CONNECTING_STALE_MS = 8000L;
+    private static final long KICKED_MIN_ALIVE_MS = 60000L;
 
     private final Map<String, XyzwWsClient> clients = new ConcurrentHashMap<String, XyzwWsClient>();
     private final Map<String, Map<String, Object>> roleInfos = new ConcurrentHashMap<String, Map<String, Object>>();
@@ -28,39 +30,66 @@ public class XyzwWsManager {
     private final Map<String, Long> towerInfoVersions = new ConcurrentHashMap<String, Long>();
     private final Map<String, Object> commandBodies = new ConcurrentHashMap<String, Object>();
     private final Map<String, Long> commandVersions = new ConcurrentHashMap<String, Long>();
+    private final Map<String, String> reconnectPauseReasons = new ConcurrentHashMap<String, String>();
+    private final Map<String, Long> reconnectPausedAtMs = new ConcurrentHashMap<String, Long>();
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
 
     public synchronized void connect(String key, String wsUrl) {
-        disconnect(key);
+        if (isReconnectPaused(key)) {
+            String reason = reconnectPauseReasons.get(key);
+            throw new IllegalStateException("闂備胶鍘ч〃搴㈢濠婂嫭鍙忛柍鍝勬噺閻撳倻鈧箍鍎遍悧蹇曠不閸撗€鍋撻崷顓х劸鐎殿喛娉涢埢鎾圭疀濞戞锛?" + reason + ")");
+        }
+        connectInternal(key, wsUrl);
+    }
+
+    public synchronized void connectManually(String key, String wsUrl) {
+        clearReconnectPause(key);
+        connectInternal(key, wsUrl);
+    }
+
+    public boolean isReconnectPaused(String key) {
+        return reconnectPauseReasons.containsKey(key);
+    }
+
+    public String getReconnectPauseReason(String key) {
+        return reconnectPauseReasons.get(key);
+    }
+
+    private void connectInternal(String key, String wsUrl) {
+        XyzwWsClient existing = clients.get(key);
+        if (existing != null) {
+            if (existing.isOpen()) {
+                logger.info("WebSocket \u5df2\u8fde\u63a5\uff0c\u8df3\u8fc7\u91cd\u590d\u8fde\u63a5 token={}", key);
+                return;
+            }
+            if (existing.isConnecting() && existing.getConnectingAgeMs() <= CONNECTING_STALE_MS) {
+                logger.info("WebSocket \u6b63\u5728\u8fde\u63a5\u4e2d\uff0c\u8df3\u8fc7\u91cd\u590d\u8fde\u63a5 token={} connectingAgeMs={}", key, existing.getConnectingAgeMs());
+                return;
+            }
+            closeClientQuietly(existing, "replace stale connection");
+            clients.remove(key);
+            logger.info("WebSocket \u53d1\u73b0\u5931\u6548\u8fde\u63a5\uff0c\u51c6\u5907\u91cd\u8fde token={}", key);
+        }
+
+        clearCachedState(key);
         try {
-            XyzwWsClient client = new XyzwWsClient(new URI(wsUrl), scheduler, key, this::handlePacket);
+            XyzwWsClient client = new XyzwWsClient(new URI(wsUrl), scheduler, key, this::handlePacket, this::handleClosed);
             clients.put(key, client);
             client.connect();
-            logger.info("WebSocket 开始连接 token={}", key);
+            logger.info("WebSocket \u5f00\u59cb\u8fde\u63a5 token={}", key);
         } catch (URISyntaxException ex) {
-            logger.warn("WS 地址无效: {}", wsUrl, ex);
-            throw new IllegalArgumentException("WS 地址无效");
+            logger.warn("WS \u5730\u5740\u65e0\u6548: {}", wsUrl, ex);
+            throw new IllegalArgumentException("WS \u5730\u5740\u65e0\u6548");
         }
     }
 
     public synchronized void disconnect(String key) {
         XyzwWsClient existing = clients.remove(key);
         if (existing != null) {
-            try {
-                existing.stopHeartbeat();
-                existing.close();
-            } catch (Exception ex) {
-                logger.debug("关闭 WebSocket 失败", ex);
-            }
+            closeClientQuietly(existing, "disconnect");
         }
-        roleInfos.remove(key);
-        roleInfoVersions.remove(key);
-        teamInfos.remove(key);
-        teamInfoVersions.remove(key);
-        towerInfos.remove(key);
-        towerInfoVersions.remove(key);
-        purgeCommandCache(key);
-        logger.info("WebSocket 已断开 token={}", key);
+        clearCachedState(key);
+        logger.info("WebSocket \u5df2\u65ad\u5f00 token={}", key);
     }
 
     public boolean isConnected(String key) {
@@ -76,7 +105,7 @@ public class XyzwWsManager {
 
     public void requestRoleInfo(String key) {
         XyzwWsClient client = getConnectedClient(key);
-        logger.info("发送身份牌请求 token={}", key);
+        logger.info("\u53d1\u9001\u8eab\u4efd\u724c\u8bf7\u6c42 token={}", key);
         client.sendCommand("role_getroleinfo", buildRoleInfoBody());
     }
 
@@ -85,7 +114,7 @@ public class XyzwWsManager {
         Map<String, Object> body = new LinkedHashMap<String, Object>();
         body.put("isSkipShareCard", true);
         body.put("type", 2);
-        logger.info("挂机加钟 token={}", key);
+        logger.info("\u6302\u673a\u52a0\u949f token={}", key);
         for (int i = 0; i < 4; i++) {
             int delay = i * 300;
             scheduler.schedule(() -> client.sendCommand("system_mysharecallback", body), delay, TimeUnit.MILLISECONDS);
@@ -95,7 +124,7 @@ public class XyzwWsManager {
 
     public void claimHangUpReward(String key) {
         XyzwWsClient client = getConnectedClient(key);
-        logger.info("领取挂机奖励 token={}", key);
+        logger.info("\u9886\u53d6\u6302\u673a\u5956\u52b1 token={}", key);
 
         client.sendCommand("system_mysharecallback", new LinkedHashMap<String, Object>());
         scheduler.schedule(() -> client.sendCommand("system_claimhangupreward", new LinkedHashMap<String, Object>()), 200, TimeUnit.MILLISECONDS);
@@ -109,7 +138,7 @@ public class XyzwWsManager {
 
     public void requestTeamInfo(String key) {
         XyzwWsClient client = getConnectedClient(key);
-        logger.info("发送阵容信息请求 token={}", key);
+        logger.info("\u53d1\u9001\u9635\u5bb9\u4fe1\u606f\u8bf7\u6c42 token={}", key);
         client.sendCommand("presetteam_getinfo", new LinkedHashMap<String, Object>());
     }
 
@@ -117,20 +146,20 @@ public class XyzwWsManager {
         XyzwWsClient client = getConnectedClient(key);
         Map<String, Object> body = new LinkedHashMap<String, Object>();
         body.put("teamId", teamId);
-        logger.info("切换阵容 token={} teamId={}", key, teamId);
+        logger.info("\u5207\u6362\u9635\u5bb9 token={} teamId={}", key, teamId);
         client.sendCommand("presetteam_saveteam", body);
         scheduler.schedule(() -> client.sendCommand("presetteam_getinfo", new LinkedHashMap<String, Object>()), 500, TimeUnit.MILLISECONDS);
     }
 
     public void requestTowerInfo(String key) {
         XyzwWsClient client = getConnectedClient(key);
-        logger.info("发送咸将塔信息请求 token={}", key);
+        logger.info("\u53d1\u9001\u54b8\u5c06\u5854\u4fe1\u606f\u8bf7\u6c42 token={}", key);
         client.sendCommand("tower_getinfo", new LinkedHashMap<String, Object>());
     }
 
     public void startTowerChallenge(String key) {
         XyzwWsClient client = getConnectedClient(key);
-        logger.info("发起咸将塔挑战 token={}", key);
+        logger.info("\u53d1\u8d77\u54b8\u5c06\u5854\u6311\u6218 token={}", key);
         client.sendCommand("fight_starttower", new LinkedHashMap<String, Object>());
         scheduler.schedule(() -> client.sendCommand("tower_getinfo", new LinkedHashMap<String, Object>()), 700, TimeUnit.MILLISECONDS);
     }
@@ -338,9 +367,48 @@ public class XyzwWsManager {
     private XyzwWsClient getConnectedClient(String key) {
         XyzwWsClient client = clients.get(key);
         if (client == null || !client.isOpen()) {
-            throw new IllegalStateException("WebSocket 未连接");
+            throw new IllegalStateException("WebSocket \u672a\u8fde\u63a5");
         }
         return client;
+    }
+
+    private void clearCachedState(String key) {
+        roleInfos.remove(key);
+        roleInfoVersions.remove(key);
+        teamInfos.remove(key);
+        teamInfoVersions.remove(key);
+        towerInfos.remove(key);
+        towerInfoVersions.remove(key);
+        purgeCommandCache(key);
+    }
+
+    private void closeClientQuietly(XyzwWsClient client, String reason) {
+        try {
+            client.closeByClient(reason);
+        } catch (Exception ex) {
+            logger.debug("\u5173\u95ed WebSocket \u5931\u8d25", ex);
+        }
+    }
+
+    private void handleClosed(String key, int code, String reason, boolean remote, boolean closedByClient, long aliveMs, String lastCmd) {
+        XyzwWsClient existing = clients.get(key);
+        if (existing != null && !existing.isOpen()) {
+            clients.remove(key);
+        }
+        if (remote && !closedByClient && code == 1006 && aliveMs >= KICKED_MIN_ALIVE_MS) {
+            markReconnectPaused(key, "suspected-kicked");
+            logger.warn("\u68c0\u6d4b\u5230\u7591\u4f3c\u88ab\u9876\u53f7\uff0c\u5df2\u6682\u505c\u81ea\u52a8\u91cd\u8fde token={} aliveMs={} lastCmd={}", key, aliveMs, lastCmd);
+        }
+    }
+
+    private void markReconnectPaused(String key, String reason) {
+        reconnectPauseReasons.put(key, reason);
+        reconnectPausedAtMs.put(key, System.currentTimeMillis());
+    }
+
+    private void clearReconnectPause(String key) {
+        reconnectPauseReasons.remove(key);
+        reconnectPausedAtMs.remove(key);
     }
 
     private void handlePacket(String key, String cmd, Object body) {
@@ -357,7 +425,7 @@ public class XyzwWsManager {
                 roleInfos.put(key, roleInfo);
                 roleInfoVersions.put(key, System.currentTimeMillis());
             }
-            logger.info("收到身份牌数据 token={}", key);
+            logger.info("\u6536\u5230\u8eab\u4efd\u724c\u6570\u636e token={}", key);
             return;
         }
 
@@ -377,7 +445,7 @@ public class XyzwWsManager {
                 teamInfos.put(key, merged);
                 teamInfoVersions.put(key, System.currentTimeMillis());
             }
-            logger.info("收到阵容数据 token={}", key);
+            logger.info("\u6536\u5230\u9635\u5bb9\u6570\u636e token={}", key);
             return;
         }
 
@@ -388,11 +456,11 @@ public class XyzwWsManager {
                 towerInfos.put(key, towerInfo);
                 towerInfoVersions.put(key, System.currentTimeMillis());
             }
-            logger.info("收到咸将塔数据 token={}", key);
+            logger.info("\u6536\u5230\u54b8\u5c06\u5854\u6570\u636e token={}", key);
             return;
         }
 
-        logger.debug("收到 WebSocket 消息 cmd={} token={}", cmd, key);
+        logger.debug("\u6536\u5230 WebSocket \u6d88\u606f cmd={} token={}", cmd, key);
     }
 
     private void recordCommandBody(String key, String cmd, Object body) {

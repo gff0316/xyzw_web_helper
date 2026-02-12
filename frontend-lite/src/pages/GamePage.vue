@@ -847,9 +847,12 @@ const sleep = (ms) =>
   });
 
 const fetchWsStatus = async (tokenJsonValue) => {
+  const stamp = Date.now();
   const response = await fetch(
-    `/api/v1/xyzw/ws/status?token=${encodeURIComponent(tokenJsonValue)}`,
-    { headers: { ...authHeaders() } }
+    `/api/v1/xyzw/ws/status?token=${encodeURIComponent(
+      tokenJsonValue
+    )}&_t=${stamp}`,
+    { headers: { ...authHeaders() }, cache: "no-store" }
   );
   const payload = await response.json();
   if (!response.ok || !payload.success || !payload.data?.status) {
@@ -904,6 +907,7 @@ const fetchTokenRecord = async () => {
     setNote("Token 已加载，可开始操作。", false);
     await loadRoleInfo(true);
     await loadTowerInfo(true);
+    await refreshStatus();
   } catch (error) {
     setNote(`加载 Token 失败: ${error.message}`, true);
   } finally {
@@ -1037,9 +1041,11 @@ const refreshStatus = async () => {
     const currentStatus = await fetchWsStatus(tokenJsonValue);
     if (currentStatus) {
       status.value = currentStatus;
+    } else {
+      status.value = "disconnected";
     }
   } catch (error) {
-    // ignore
+    status.value = "disconnected";
   }
 };
 
@@ -1602,7 +1608,7 @@ const formatTime = (seconds) => {
   return `${h}:${m}:${s}`;
 };
 
-const statusTimer = setInterval(refreshStatus, 30000);
+const statusTimer = setInterval(refreshStatus, 5000);
 
 onMounted(() => {
   if (route.params.tokenId) {
