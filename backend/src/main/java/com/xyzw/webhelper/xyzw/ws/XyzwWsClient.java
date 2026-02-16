@@ -38,6 +38,7 @@ final class XyzwWsClient extends WebSocketClient {
     private volatile String lastCmd = NO_COMMAND;
     private volatile boolean closedByClient = false;
     private volatile String closeReasonByClient = NO_REASON;
+    private volatile boolean kickedByOtherLogin = false;
 
     interface PacketListener {
         void onPacket(String key, String cmd, Object body);
@@ -72,6 +73,7 @@ final class XyzwWsClient extends WebSocketClient {
     @Override
     public void onOpen(ServerHandshake handshakeData) {
         openedAtMs = System.currentTimeMillis();
+        kickedByOtherLogin = false;
         logger.info("WebSocket 已连接 uri={} token={}", getURI(), key);
         startHeartbeat();
     }
@@ -102,9 +104,25 @@ final class XyzwWsClient extends WebSocketClient {
                 ack.set(((Number) seqValue).intValue());
             }
             if (packetListener != null) {
-                String cmd = String.valueOf(packet.get("cmd"));
-                if (cmd != null) {
-                    cmd = cmd.toLowerCase(Locale.ROOT);
+                Object error = packet.get("error");
+                String cmd = normalizeCmd(packet.get("cmd"));
+                if ((cmd == null || cmd.isEmpty()) && hasPacketError(error)) {
+                    String inferred = inferResponseCmdFromLastCmd();
+                    if (inferred != null) {
+                        cmd = inferred;
+                        logger.info("WebSocket 错误包缺少 cmd，按最近指令推断 cmd={} token={}", cmd, key);
+                    }
+                }
+                if (isOtherLoginFatal(cmd, error)) {
+                    kickedByOtherLogin = true;
+                    logger.warn("WebSocket 收到顶号通知，连接即将被服务端关闭 token={}", key);
+                }
+                if (hasPacketError(error)) {
+                    if (isBottleAlreadyOccupiedError(cmd, error)) {
+                        logger.info("WebSocket 罐子启动提示：{} cmd={} token={}", error, cmd, key);
+                    } else {
+                        logger.warn("WebSocket 命令返回错误 cmd={} error={} token={}", cmd, error, key);
+                    }
                 }
                 Object body = packet.get("body");
                 Object bodyDecoded = body;
@@ -124,6 +142,9 @@ final class XyzwWsClient extends WebSocketClient {
         long aliveMs = openedAtMs > 0 ? Math.max(0L, now - openedAtMs) : Math.max(0L, now - connectStartMs);
         long lastSendAgoMs = lastSendAtMs > 0 ? Math.max(0L, now - lastSendAtMs) : -1L;
         String normalizedReason = normalizeReason(reason);
+        if (kickedByOtherLogin) {
+            normalizedReason = "other login";
+        }
         logger.info(
             "WebSocket 连接关闭: code={}, reason={}, remote={}, closedByClient={}, closeReasonByClient={}, aliveMs={}, lastCmd={}, lastSendAgoMs={}, token={}",
             code,
@@ -229,5 +250,70 @@ final class XyzwWsClient extends WebSocketClient {
         }
         String trimmed = reason.trim();
         return trimmed.isEmpty() ? NO_REASON : trimmed;
+    }
+
+    private boolean hasPacketError(Object error) {
+        if (error == null) {
+            return false;
+        }
+        if (error instanceof Number) {
+            return ((Number) error).intValue() != 0;
+        }
+        if (error instanceof String) {
+            String text = ((String) error).trim();
+            if (text.isEmpty()) {
+                return false;
+            }
+            return !"0".equals(text);
+        }
+        return true;
+    }
+
+    private String normalizeCmd(Object cmdObj) {
+        if (cmdObj == null) {
+            return null;
+        }
+        String text = String.valueOf(cmdObj).trim();
+        if (text.isEmpty() || "null".equalsIgnoreCase(text)) {
+            return null;
+        }
+        return text.toLowerCase(Locale.ROOT);
+    }
+
+    private String inferResponseCmdFromLastCmd() {
+        String latest = lastCmd;
+        if (latest == null) {
+            return null;
+        }
+        String text = latest.trim().toLowerCase(Locale.ROOT);
+        if (text.isEmpty() || NO_COMMAND.equals(text) || "null".equals(text)) {
+            return null;
+        }
+        if (text.endsWith("resp")) {
+            return text;
+        }
+        return text + "resp";
+    }
+
+    private boolean isBottleAlreadyOccupiedError(String cmd, Object error) {
+        if (cmd == null || !"bottlehelper_startresp".equals(cmd)) {
+            return false;
+        }
+        if (!(error instanceof String)) {
+            return false;
+        }
+        String text = ((String) error).trim();
+        return text.contains("已经占领过这种类型的罐子");
+    }
+
+    private boolean isOtherLoginFatal(String cmd, Object error) {
+        if (cmd == null || !"_sys/fatal".equals(cmd)) {
+            return false;
+        }
+        if (!(error instanceof String)) {
+            return false;
+        }
+        String text = ((String) error).trim().toLowerCase(Locale.ROOT);
+        return "other login".equals(text);
     }
 }

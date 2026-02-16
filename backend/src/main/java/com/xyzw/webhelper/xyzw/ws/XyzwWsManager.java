@@ -1,5 +1,7 @@
 package com.xyzw.webhelper.xyzw.ws;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -13,6 +15,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 @Component
@@ -20,6 +23,9 @@ public class XyzwWsManager {
     private static final Logger logger = LoggerFactory.getLogger(XyzwWsManager.class);
     private static final long CONNECTING_STALE_MS = 8000L;
     private static final long KICKED_MIN_ALIVE_MS = 60000L;
+    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final TypeReference<LinkedHashMap<String, Object>> MAP_TYPE = new TypeReference<LinkedHashMap<String, Object>>() {
+    };
 
     private final Map<String, XyzwWsClient> clients = new ConcurrentHashMap<String, XyzwWsClient>();
     private final Map<String, Map<String, Object>> roleInfos = new ConcurrentHashMap<String, Map<String, Object>>();
@@ -32,6 +38,7 @@ public class XyzwWsManager {
     private final Map<String, Long> commandVersions = new ConcurrentHashMap<String, Long>();
     private final Map<String, String> reconnectPauseReasons = new ConcurrentHashMap<String, String>();
     private final Map<String, Long> reconnectPausedAtMs = new ConcurrentHashMap<String, Long>();
+    private final Map<Long, String> roleBindings = new ConcurrentHashMap<Long, String>();
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
 
     public synchronized void connect(String key, String wsUrl) {
@@ -55,14 +62,79 @@ public class XyzwWsManager {
         return reconnectPauseReasons.get(key);
     }
 
+    public String normalizeToken(String rawToken) {
+        if (rawToken == null) {
+            return null;
+        }
+        String token = rawToken.trim();
+        if (token.isEmpty()) {
+            return token;
+        }
+
+        Map<String, Object> payload = parseJsonToken(token);
+        if (!containsRoleToken(payload)) {
+            payload = XyzwTokenPayloadDecoder.decodeFromBase64Token(token);
+        }
+        if (!containsRoleToken(payload)) {
+            return token;
+        }
+
+        Map<String, Object> copy = new LinkedHashMap<String, Object>(payload);
+        long now = System.currentTimeMillis();
+        Long sessId = asLong(copy.get("sessId"));
+        Long connId = asLong(copy.get("connId"));
+        if (sessId == null || sessId <= 0) {
+            sessId = now * 100 + ThreadLocalRandom.current().nextInt(100);
+        }
+        if (connId == null || connId <= 0) {
+            connId = now + ThreadLocalRandom.current().nextInt(10);
+        }
+        copy.put("sessId", sessId);
+        copy.put("connId", connId);
+        copy.put("isRestore", 0);
+
+        try {
+            return JSON.writeValueAsString(copy);
+        } catch (Exception ex) {
+            logger.warn("token 规范化失败，回退原始 token", ex);
+            return token;
+        }
+    }
+
     private void connectInternal(String key, String wsUrl) {
+        Long roleId = extractRoleIdFromToken(key);
+        if (roleId != null) {
+            String oldKey = roleBindings.get(roleId);
+            if (oldKey != null && !oldKey.equals(key)) {
+                XyzwWsClient oldClient = clients.remove(oldKey);
+                if (oldClient != null) {
+                    closeClientQuietly(oldClient, "replace by same role");
+                }
+                clearCachedState(oldKey);
+                clearReconnectPause(oldKey);
+                roleBindings.remove(roleId, oldKey);
+                logger.info(
+                    "检测到同角色重复连接，已替换旧连接 roleId={} oldToken={} newToken={}",
+                    roleId,
+                    briefToken(oldKey),
+                    briefToken(key)
+                );
+            }
+        }
+
         XyzwWsClient existing = clients.get(key);
         if (existing != null) {
             if (existing.isOpen()) {
+                if (roleId != null) {
+                    roleBindings.put(roleId, key);
+                }
                 logger.info("WebSocket 已连接，跳过重复连接 token={}", key);
                 return;
             }
             if (existing.isConnecting() && existing.getConnectingAgeMs() <= CONNECTING_STALE_MS) {
+                if (roleId != null) {
+                    roleBindings.put(roleId, key);
+                }
                 logger.info("WebSocket 正在连接中，跳过重复连接 token={} connectingAgeMs={}", key, existing.getConnectingAgeMs());
                 return;
             }
@@ -75,6 +147,9 @@ public class XyzwWsManager {
         try {
             XyzwWsClient client = new XyzwWsClient(new URI(wsUrl), scheduler, key, this::handlePacket, this::handleClosed);
             clients.put(key, client);
+            if (roleId != null) {
+                roleBindings.put(roleId, key);
+            }
             client.connect();
             logger.info("WebSocket 开始连接 token={}", key);
         } catch (URISyntaxException ex) {
@@ -88,6 +163,7 @@ public class XyzwWsManager {
         if (existing != null) {
             closeClientQuietly(existing, "disconnect");
         }
+        removeRoleBindingForKey(key);
         clearCachedState(key);
         logger.info("WebSocket 已断开 token={}", key);
     }
@@ -262,6 +338,18 @@ public class XyzwWsManager {
         return null;
     }
 
+    public boolean waitForCommandArrived(String key, String cmd, long previousVersion, long timeoutMs) {
+        long start = System.currentTimeMillis();
+        while (System.currentTimeMillis() - start < timeoutMs) {
+            long version = getCommandVersion(key, cmd);
+            if (version > previousVersion) {
+                return true;
+            }
+            sleepQuietly(50);
+        }
+        return false;
+    }
+
     public Long extractHangUpRemainingSeconds(Map<String, Object> roleInfo) {
         HangUpMetrics metrics = buildHangUpMetrics(roleInfo);
         return metrics == null ? null : metrics.remainingSeconds;
@@ -392,8 +480,20 @@ public class XyzwWsManager {
 
     private void handleClosed(String key, int code, String reason, boolean remote, boolean closedByClient, long aliveMs, String lastCmd) {
         XyzwWsClient existing = clients.get(key);
-        if (existing != null && !existing.isOpen()) {
+        boolean shouldClearRoleBinding = false;
+        if (existing == null) {
+            shouldClearRoleBinding = true;
+        } else if (!existing.isOpen() && !existing.isConnecting()) {
             clients.remove(key);
+            shouldClearRoleBinding = true;
+        }
+        if (shouldClearRoleBinding) {
+            removeRoleBindingForKey(key);
+        }
+        if (remote && !closedByClient && reason != null && "other login".equalsIgnoreCase(reason.trim())) {
+            markReconnectPaused(key, "other-login");
+            logger.warn("检测到账号在其他地方登录，已暂停自动重连 token={} lastCmd={}", key, lastCmd);
+            return;
         }
         if (remote && !closedByClient && code == 1006 && aliveMs >= KICKED_MIN_ALIVE_MS) {
             markReconnectPaused(key, "suspected-kicked");
@@ -460,6 +560,11 @@ public class XyzwWsManager {
             return;
         }
 
+        if ("bottlehelper_stopresp".equals(cmd) || "bottlehelper_startresp".equals(cmd) || "syncresp".equals(cmd)) {
+            logger.info("收到命令回包 cmd={} token={}", cmd, key);
+            return;
+        }
+
         logger.debug("收到 WebSocket 消息 cmd={} token={}", cmd, key);
     }
 
@@ -467,11 +572,12 @@ public class XyzwWsManager {
         if (cmd == null || cmd.trim().isEmpty()) {
             return;
         }
-        if (body == null) {
-            return;
-        }
         String cacheKey = commandKey(key, cmd);
-        commandBodies.put(cacheKey, body);
+        if (body == null) {
+            commandBodies.remove(cacheKey);
+        } else {
+            commandBodies.put(cacheKey, body);
+        }
         commandVersions.put(cacheKey, System.currentTimeMillis());
     }
 
@@ -546,6 +652,67 @@ public class XyzwWsManager {
             }
         }
         return null;
+    }
+
+    private Long extractRoleIdFromToken(String token) {
+        if (token == null || token.trim().isEmpty()) {
+            return null;
+        }
+        Map<String, Object> payload = parseJsonToken(token.trim());
+        if (payload == null || payload.isEmpty()) {
+            payload = XyzwTokenPayloadDecoder.decodeFromBase64Token(token);
+        }
+        if (payload == null || payload.isEmpty()) {
+            return null;
+        }
+        Long roleId = asLong(payload.get("roleId"));
+        if (roleId == null || roleId <= 0) {
+            return null;
+        }
+        return roleId;
+    }
+
+    private void removeRoleBindingForKey(String key) {
+        if (key == null || key.isEmpty()) {
+            return;
+        }
+        List<Long> roleIds = new ArrayList<Long>(roleBindings.keySet());
+        for (Long roleId : roleIds) {
+            String boundKey = roleBindings.get(roleId);
+            if (key.equals(boundKey)) {
+                roleBindings.remove(roleId, boundKey);
+            }
+        }
+    }
+
+    private String briefToken(String token) {
+        if (token == null) {
+            return "<null>";
+        }
+        String value = token.trim();
+        if (value.isEmpty()) {
+            return "<empty>";
+        }
+        int len = value.length();
+        if (len <= 16) {
+            return value + "(len=" + len + ")";
+        }
+        return value.substring(0, 6) + "..." + value.substring(len - 6) + "(len=" + len + ")";
+    }
+
+    private Map<String, Object> parseJsonToken(String token) {
+        if (token == null || token.isEmpty() || token.charAt(0) != '{') {
+            return null;
+        }
+        try {
+            return JSON.readValue(token, MAP_TYPE);
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    private boolean containsRoleToken(Map<String, Object> payload) {
+        return payload != null && payload.get("roleToken") != null;
     }
 
     private void sleepQuietly(long ms) {

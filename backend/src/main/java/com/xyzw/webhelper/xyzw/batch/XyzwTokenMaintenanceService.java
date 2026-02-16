@@ -10,20 +10,25 @@ import org.springframework.stereotype.Service;
 
 import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class XyzwTokenMaintenanceService {
     private static final Logger logger = LoggerFactory.getLogger(XyzwTokenMaintenanceService.class);
     private static final long CONNECT_TIMEOUT_MS = 5000;
     private static final long PROBE_TIMEOUT_MS = 3000;
+    private static final long BOTTLE_COMMAND_TIMEOUT_MS = 4000;
+    private static final long BOTTLE_ROLE_REFRESH_TIMEOUT_MS = 4000;
+    private static final int BOTTLE_START_MAX_ATTEMPTS = 2;
     private static final int DEFAULT_BOTTLE_TYPE = 0;
     private static final int MAX_RECONNECT_RETRIES = 3;
     private static final long RETRY_DELAY_MS = 800;
 
     private final XyzwUserTokenMapper tokenMapper;
     private final XyzwWsManager wsManager;
-    @Value("${jobs.token-maintenance.enable-bottle-restart:false}")
+    @Value("${jobs.token-maintenance.enable-bottle-restart:true}")
     private boolean enableBottleRestart;
 
     public XyzwTokenMaintenanceService(XyzwUserTokenMapper tokenMapper, XyzwWsManager wsManager) {
@@ -37,7 +42,7 @@ public class XyzwTokenMaintenanceService {
             logger.info("批量维护任务结束，没有可用的 token");
             return;
         }
-        logger.info("批量维护任务开始 count={}", tokens.size());
+        logger.info("批量维护任务开始 count={} enableBottleRestart={}", tokens.size(), enableBottleRestart);
         int success = 0;
         int failed = 0;
         for (XyzwUserToken token : tokens) {
@@ -71,11 +76,9 @@ public class XyzwTokenMaintenanceService {
         logger.info("开始执行维护任务 {}", label);
 
         if (enableBottleRestart) {
-            wsManager.sendBottleHelperRestart(token, DEFAULT_BOTTLE_TYPE);
-            sleep(800);
-            ensureConnectedOrReconnect(token, wsUrl, label, "bottle-restart");
+            restartBottleHelperAndWait(token, wsUrl, label);
         } else {
-            logger.debug("skip bottle helper restart {}", label);
+            logger.info("已跳过重启罐子（开关关闭） {}", label);
         }
 
         ensureConnectedOrReconnect(token, wsUrl, label, "extend-hangup");
@@ -179,6 +182,125 @@ public class XyzwTokenMaintenanceService {
         } catch (UnsupportedEncodingException ex) {
             throw new IllegalStateException("不支持的编码 UTF-8", ex);
         }
+    }
+
+    private void restartBottleHelperAndWait(String token, String wsUrl, String label) {
+        ensureConnectedOrReconnect(token, wsUrl, label, "bottle-restart-stop");
+        Map<String, Object> bottleBody = new LinkedHashMap<String, Object>();
+        bottleBody.put("bottleType", DEFAULT_BOTTLE_TYPE);
+
+        long beforeStop = wsManager.getCommandVersion(token, "bottlehelper_stopresp");
+        long beforeStopSync = wsManager.getCommandVersion(token, "syncresp");
+        logger.info("开始停止罐子 {}", label);
+        wsManager.sendCommand(token, "bottlehelper_stop", bottleBody);
+        boolean stopOk = wsManager.waitForCommandArrived(token, "bottlehelper_stopresp", beforeStop, BOTTLE_COMMAND_TIMEOUT_MS);
+        if (!stopOk) {
+            stopOk = wsManager.waitForCommandArrived(token, "syncresp", beforeStopSync, 800);
+        }
+        if (!stopOk) {
+            throw new IllegalStateException("停止罐子超时: " + label);
+        }
+        logger.info("停止罐子完成 {}", label);
+
+        sleep(250);
+        boolean startOk = false;
+        for (int attempt = 1; attempt <= BOTTLE_START_MAX_ATTEMPTS && !startOk; attempt++) {
+            ensureConnectedOrReconnect(token, wsUrl, label, "bottle-restart-start");
+            long beforeStart = wsManager.getCommandVersion(token, "bottlehelper_startresp");
+            long beforeStartSync = wsManager.getCommandVersion(token, "syncresp");
+            logger.info("开始启动罐子 {} attempt={}/{}", label, attempt, BOTTLE_START_MAX_ATTEMPTS);
+            wsManager.sendCommand(token, "bottlehelper_start", bottleBody);
+
+            startOk = wsManager.waitForCommandArrived(token, "bottlehelper_startresp", beforeStart, BOTTLE_COMMAND_TIMEOUT_MS);
+            if (!startOk) {
+                startOk = wsManager.waitForCommandArrived(token, "syncresp", beforeStartSync, 800);
+            }
+            if (!startOk) {
+                logger.warn("启动罐子未收到回包，改用身份牌状态确认 {} attempt={}/{}", label, attempt, BOTTLE_START_MAX_ATTEMPTS);
+            }
+
+            if (confirmBottleRunning(token, label, BOTTLE_ROLE_REFRESH_TIMEOUT_MS)) {
+                startOk = true;
+                break;
+            }
+
+            if (attempt < BOTTLE_START_MAX_ATTEMPTS) {
+                logger.warn("罐子仍未运行，准备重试启动 {} nextAttempt={}/{}", label, attempt + 1, BOTTLE_START_MAX_ATTEMPTS);
+                sleep(400);
+            }
+        }
+        if (!startOk) {
+            throw new IllegalStateException("启动罐子超时: " + label);
+        }
+        logger.info("启动罐子完成 {}", label);
+
+        long beforeRole = wsManager.getRoleInfoVersion(token);
+        wsManager.requestRoleInfo(token);
+        if (wsManager.waitForRoleInfoUpdated(token, beforeRole, BOTTLE_ROLE_REFRESH_TIMEOUT_MS) == null) {
+            logger.warn("重启罐子后身份牌未刷新 {}", label);
+        } else {
+            logger.info("重启罐子流程完成 {}", label);
+        }
+    }
+
+    private boolean confirmBottleRunning(String token, String label, long timeoutMs) {
+        long deadline = System.currentTimeMillis() + Math.max(500L, timeoutMs);
+        while (System.currentTimeMillis() < deadline) {
+            long before = wsManager.getRoleInfoVersion(token);
+            wsManager.requestRoleInfo(token);
+            long waitMs = Math.min(1500L, Math.max(200L, deadline - System.currentTimeMillis()));
+            Map<String, Object> roleInfo = wsManager.waitForRoleInfoUpdated(token, before, waitMs);
+            if (roleInfo == null) {
+                roleInfo = wsManager.getRoleInfo(token);
+            }
+            Long helperStopTime = extractBottleHelperStopTime(roleInfo);
+            long nowSec = System.currentTimeMillis() / 1000;
+            if (helperStopTime != null && helperStopTime > nowSec) {
+                logger.info("罐子运行状态确认成功 {} helperStopTime={} nowSec={}", label, helperStopTime, nowSec);
+                return true;
+            }
+            logger.info("罐子运行状态未生效 {} helperStopTime={} nowSec={}", label, helperStopTime, nowSec);
+            sleep(250);
+        }
+        return false;
+    }
+
+    private boolean isBottleRunning(Map<String, Object> roleInfo) {
+        Long helperStopTime = extractBottleHelperStopTime(roleInfo);
+        if (helperStopTime == null || helperStopTime <= 0) {
+            return false;
+        }
+        long nowSec = System.currentTimeMillis() / 1000;
+        return helperStopTime > nowSec;
+    }
+
+    private Long extractBottleHelperStopTime(Map<String, Object> roleInfo) {
+        if (roleInfo == null) {
+            return null;
+        }
+        Object roleObj = roleInfo.get("role");
+        if (!(roleObj instanceof Map)) {
+            return null;
+        }
+        Object bottleObj = ((Map<?, ?>) roleObj).get("bottleHelpers");
+        if (!(bottleObj instanceof Map)) {
+            return null;
+        }
+        return asLong(((Map<?, ?>) bottleObj).get("helperStopTime"));
+    }
+
+    private Long asLong(Object value) {
+        if (value instanceof Number) {
+            return ((Number) value).longValue();
+        }
+        if (value instanceof String) {
+            try {
+                return Long.parseLong(((String) value).trim());
+            } catch (NumberFormatException ex) {
+                return null;
+            }
+        }
+        return null;
     }
 
     private String resolveWsUrl(String configuredWsUrl, String token) {
