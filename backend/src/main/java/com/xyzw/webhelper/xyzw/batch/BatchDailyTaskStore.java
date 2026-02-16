@@ -31,7 +31,7 @@ public class BatchDailyTaskStore {
             }
             return mapper.readValue(bytes, new TypeReference<List<BatchDailyTask>>() {});
         } catch (IOException ex) {
-            logger.warn("\u8bfb\u53d6\u6279\u91cf\u65e5\u5e38\u4efb\u52a1\u5931\u8d25\uff0c\u8fd4\u56de\u7a7a\u5217\u8868", ex);
+            logger.warn("读取批量日常任务失败，返回空列表", ex);
             return new ArrayList<BatchDailyTask>();
         }
     }
@@ -43,7 +43,7 @@ public class BatchDailyTaskStore {
             }
             mapper.writerWithDefaultPrettyPrinter().writeValue(storagePath.toFile(), tasks);
         } catch (IOException ex) {
-            logger.warn("\u5199\u5165\u6279\u91cf\u65e5\u5e38\u4efb\u52a1\u5931\u8d25", ex);
+            logger.warn("写入批量日常任务失败", ex);
         }
     }
 }

@@ -34,15 +34,15 @@ public class XyzwTokenMaintenanceService {
     public void runAllTokens() {
         List<XyzwUserToken> tokens = tokenMapper.findAll();
         if (tokens == null || tokens.isEmpty()) {
-            logger.info("\u6279\u91cf\u7ef4\u62a4\u4efb\u52a1\u7ed3\u675f\uff0c\u6ca1\u6709\u53ef\u7528\u7684 token");
+            logger.info("批量维护任务结束，没有可用的 token");
             return;
         }
-        logger.info("\u6279\u91cf\u7ef4\u62a4\u4efb\u52a1\u5f00\u59cb count={}", tokens.size());
+        logger.info("批量维护任务开始 count={}", tokens.size());
         int success = 0;
         int failed = 0;
         for (XyzwUserToken token : tokens) {
             if (token == null || isBlank(token.getToken())) {
-                logger.warn("\u5ffd\u7565\u7a7a token id={}", token == null ? null : token.getId());
+                logger.warn("忽略空 token id={}", token == null ? null : token.getId());
                 continue;
             }
             String tokenValue = token.getToken();
@@ -56,11 +56,11 @@ public class XyzwTokenMaintenanceService {
             }
             sleep(300);
         }
-        logger.info("\u6279\u91cf\u7ef4\u62a4\u4efb\u52a1\u7ed3\u675f success={} failed={}", success, failed);
+        logger.info("批量维护任务结束 success={} failed={}", success, failed);
     }
 
     private void runForToken(String token, String wsUrl, String label) {
-        logger.info("\u5f00\u59cb\u6267\u884c\u7ef4\u62a4\u4efb\u52a1 {}", label);
+        logger.info("开始执行维护任务 {}", label);
 
         if (enableBottleRestart) {
             wsManager.sendBottleHelperRestart(token, DEFAULT_BOTTLE_TYPE);
@@ -74,18 +74,18 @@ public class XyzwTokenMaintenanceService {
         long beforeExtend = wsManager.getRoleInfoVersion(token);
         wsManager.extendHangUp(token);
         if (wsManager.waitForRoleInfoUpdated(token, beforeExtend, 6000) == null) {
-            logger.warn("\u6302\u673a\u52a0\u949f\u8d85\u65f6 {}", label);
+            logger.warn("挂机加钟超时 {}", label);
         } else {
-            logger.info("\u6302\u673a\u52a0\u949f\u5b8c\u6210 {}", label);
+            logger.info("挂机加钟完成 {}", label);
         }
 
         ensureConnectedOrReconnect(token, wsUrl, label, "claim-reward");
         long beforeClaim = wsManager.getRoleInfoVersion(token);
         wsManager.claimHangUpReward(token);
         if (wsManager.waitForRoleInfoUpdated(token, beforeClaim, 6000) == null) {
-            logger.warn("\u9886\u53d6\u6302\u673a\u5956\u52b1\u8d85\u65f6 {}", label);
+            logger.warn("领取挂机奖励超时 {}", label);
         } else {
-            logger.info("\u9886\u53d6\u6302\u673a\u5956\u52b1\u5b8c\u6210 {}", label);
+            logger.info("领取挂机奖励完成 {}", label);
         }
     }
 
@@ -99,19 +99,19 @@ public class XyzwTokenMaintenanceService {
                 }
                 connected = connectAndWait(tokenValue, wsUrl);
                 if (!connected) {
-                    logger.warn("token \u8fde\u63a5\u5931\u8d25 {} attempt={}/{}", label, attempt, MAX_RECONNECT_RETRIES);
+                    logger.warn("token 连接失败 {} attempt={}/{}", label, attempt, MAX_RECONNECT_RETRIES);
                     continue;
                 }
                 if (!probeRoleInfo(tokenValue, label)) {
-                    logger.warn("token \u63a2\u6d3b\u5931\u8d25 {} attempt={}/{}", label, attempt, MAX_RECONNECT_RETRIES);
+                    logger.warn("token 探活失败 {} attempt={}/{}", label, attempt, MAX_RECONNECT_RETRIES);
                     continue;
                 }
                 runForToken(tokenValue, wsUrl, label);
-                logger.info("\u7ef4\u62a4\u4efb\u52a1\u6210\u529f {} attempt={}/{}", label, attempt, MAX_RECONNECT_RETRIES);
+                logger.info("维护任务成功 {} attempt={}/{}", label, attempt, MAX_RECONNECT_RETRIES);
                 return true;
             } catch (Exception ex) {
                 logger.warn(
-                    "\u7ef4\u62a4\u4efb\u52a1\u5931\u8d25 {} attempt={}/{} msg={}",
+                    "维护任务失败 {} attempt={}/{} msg={}",
                     label,
                     attempt,
                     MAX_RECONNECT_RETRIES,
@@ -123,7 +123,7 @@ public class XyzwTokenMaintenanceService {
                 sleep(RETRY_DELAY_MS);
             }
         }
-        logger.error("\u7ef4\u62a4\u4efb\u52a1\u6700\u7ec8\u5931\u8d25 {}", label);
+        logger.error("维护任务最终失败 {}", label);
         safeDisconnect(tokenValue);
         return false;
     }
@@ -134,7 +134,7 @@ public class XyzwTokenMaintenanceService {
             wsManager.requestRoleInfo(token);
             return wsManager.waitForRoleInfoUpdated(token, before, PROBE_TIMEOUT_MS) != null;
         } catch (Exception ex) {
-            logger.warn("\u63a2\u6d3b\u5f02\u5e38 {} msg={}", label, ex.getMessage());
+            logger.warn("探活异常 {} msg={}", label, ex.getMessage());
             return false;
         }
     }
@@ -169,14 +169,14 @@ public class XyzwTokenMaintenanceService {
                 URLEncoder.encode(token, "UTF-8") +
                 "&e=x&lang=chinese";
         } catch (UnsupportedEncodingException ex) {
-            throw new IllegalStateException("\u4e0d\u652f\u6301\u7684\u7f16\u7801 UTF-8", ex);
+            throw new IllegalStateException("不支持的编码 UTF-8", ex);
         }
     }
 
     private String buildTokenLabel(XyzwUserToken token) {
         String name = token.getName();
         if (name == null || name.trim().isEmpty()) {
-            name = "\u672a\u547d\u540d\u8d26\u53f7";
+            name = "未命名账号";
         }
         return "id=" + token.getId() + " name=" + name;
     }
@@ -199,7 +199,7 @@ public class XyzwTokenMaintenanceService {
         try {
             wsManager.disconnect(token);
         } catch (Exception ex) {
-            logger.debug("\u5173\u95ed WebSocket \u5931\u8d25 token={}", token, ex);
+            logger.debug("关闭 WebSocket 失败 token={}", token, ex);
         }
     }
 

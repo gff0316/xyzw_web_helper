@@ -51,7 +51,7 @@ public class BatchDailySchedulerService {
                 tasks.put(task.getId(), task);
             }
         }
-        logger.info("\u6279\u91cf\u65e5\u5e38\u4efb\u52a1\u52a0\u8f7d\u5b8c\u6210 count={}", tasks.size());
+        logger.info("批量日常任务加载完成 count={}", tasks.size());
     }
 
     public List<BatchDailyTaskResponse> listTasks(Long userId) {
@@ -104,12 +104,12 @@ public class BatchDailySchedulerService {
         if (task == null || !userId.equals(task.getUserId())) {
             return false;
         }
-        submitTask(task, "\u624b\u52a8\u89e6\u53d1");
+        submitTask(task, "手动触发");
         return true;
     }
 
     public void runDueTasks() {
-        runDueTasks("\u5b9a\u65f6\u89e6\u53d1");
+        runDueTasks("定时触发");
     }
 
     public void runDueTasks(String trigger) {
@@ -157,9 +157,9 @@ public class BatchDailySchedulerService {
         List<BatchDailyToken> tokens = task.getTokens() == null ? new ArrayList<BatchDailyToken>() : task.getTokens();
         int success = 0;
         int fail = 0;
-        logger.info("\u6279\u91cf\u65e5\u5e38\u4efb\u52a1\u5f00\u59cb name={} trigger={} tokenCount={}", task.getName(), trigger, tokens.size());
+        logger.info("批量日常任务开始 name={} trigger={} tokenCount={}", task.getName(), trigger, tokens.size());
         for (BatchDailyToken token : tokens) {
-            String tokenName = token.getName() == null ? "\u672a\u547d\u540d\u8d26\u53f7" : token.getName();
+            String tokenName = token.getName() == null ? "未命名账号" : token.getName();
             try {
                 String tokenJson = buildTokenJson(token);
                 XyzwDailyTaskRequest req = new XyzwDailyTaskRequest();
@@ -168,20 +168,20 @@ public class BatchDailySchedulerService {
                 Map<String, Object> body = wsController.runDailyTasks(req).getBody();
                 if (body != null && Boolean.TRUE.equals(body.get("success"))) {
                     success++;
-                    logger.info("\u6279\u91cf\u65e5\u5e38\u4efb\u52a1\u5b8c\u6210 token={}", tokenName);
+                    logger.info("批量日常任务完成 token={}", tokenName);
                 } else {
                     fail++;
-                    logger.warn("\u6279\u91cf\u65e5\u5e38\u4efb\u52a1\u5931\u8d25 token={}", tokenName);
+                    logger.warn("批量日常任务失败 token={}", tokenName);
                 }
             } catch (Exception ex) {
                 fail++;
-                logger.warn("\u6279\u91cf\u65e5\u5e38\u4efb\u52a1\u5f02\u5e38 token={} msg={}", tokenName, ex.getMessage());
+                logger.warn("批量日常任务异常 token={} msg={}", tokenName, ex.getMessage());
             }
             sleep(task.getTaskDelayMs());
         }
         task.setLastRunDate(LocalDate.now().format(DATE_FMT));
         task.setLastRunAt(nowString());
-        task.setLastStatus(String.format("\u6210\u529f %d / \u5931\u8d25 %d", success, fail));
+        task.setLastStatus(String.format("成功 %d / 失败 %d", success, fail));
         task.setUpdatedAt(nowString());
         store.save(tasks.values());
         if (auditService != null && logId != null) {
@@ -190,13 +190,13 @@ public class BatchDailySchedulerService {
             String details = "taskId=" + task.getId() + ", trigger=" + trigger;
             auditService.finish(logId, status, message, details, System.currentTimeMillis() - startMs);
         }
-        logger.info("\u6279\u91cf\u65e5\u5e38\u4efb\u52a1\u7ed3\u675f name={} success={} fail={}", task.getName(), success, fail);
+        logger.info("批量日常任务结束 name={} success={} fail={}", task.getName(), success, fail);
     }
 
     private String buildTokenJson(BatchDailyToken token) {
         Map<String, Object> data = token.getTokenData();
         if (data == null || data.isEmpty()) {
-            throw new IllegalArgumentException("tokenData \u4e3a\u7a7a");
+            throw new IllegalArgumentException("tokenData 为空");
         }
         Map<String, Object> copy = new java.util.LinkedHashMap<String, Object>(data);
         long sessId = token.getSessId() == null ? generateSessId() : token.getSessId();
@@ -209,7 +209,7 @@ public class BatchDailySchedulerService {
         try {
             return mapper.writeValueAsString(copy);
         } catch (Exception ex) {
-            throw new IllegalStateException("\u751f\u6210 token JSON \u5931\u8d25");
+            throw new IllegalStateException("生成 token JSON 失败");
         }
     }
 
@@ -220,7 +220,7 @@ public class BatchDailySchedulerService {
         if (request.getName() != null && !request.getName().trim().isEmpty()) {
             task.setName(request.getName().trim());
         } else if (task.getName() == null) {
-            task.setName("\u6279\u91cf\u65e5\u5e38\u4efb\u52a1");
+            task.setName("批量日常任务");
         }
         if (request.getTime() != null) {
             task.setTime(normalizeTime(request.getTime()));

@@ -57,9 +57,9 @@ public class JobDispatchService {
 
     @PostConstruct
     public void init() {
-        jobNameMap.put("batchDailyRunner", "\u6279\u91cf\u65e5\u5e38\u626b\u63cf");
-        jobNameMap.put("tokenRefreshRunner", "Token\u5237\u65b0");
-        jobNameMap.put("tokenMaintenanceRunner", "\u7f50\u5b50\u548c\u6302\u673a\u5956\u52b1");
+        jobNameMap.put("batchDailyRunner", "批量日常扫描");
+        jobNameMap.put("tokenRefreshRunner", "Token刷新");
+        jobNameMap.put("tokenMaintenanceRunner", "罐子和挂机奖励");
         configService.ensureDefaults(defaultConfigs());
 
         syncSystemManagedConfig(
