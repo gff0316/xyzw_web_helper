@@ -45,9 +45,17 @@ public class XyzwTokenMaintenanceService {
                 logger.warn("忽略空 token id={}", token == null ? null : token.getId());
                 continue;
             }
-            String tokenValue = token.getToken();
-            String wsUrl = isBlank(token.getWsUrl()) ? buildDefaultWsUrl(tokenValue) : token.getWsUrl();
+            String rawToken = token.getToken();
+            String tokenValue = wsManager.normalizeToken(rawToken);
+            if (isBlank(tokenValue)) {
+                logger.warn("token 规范化失败，忽略 id={}", token.getId());
+                continue;
+            }
+            String wsUrl = resolveWsUrl(token.getWsUrl(), tokenValue);
             String label = buildTokenLabel(token);
+            if (!tokenValue.equals(rawToken)) {
+                logger.info("token 规范化完成 {} raw={} normalized={}", label, briefToken(rawToken), briefToken(tokenValue));
+            }
 
             if (processTokenWithRetry(tokenValue, wsUrl, label)) {
                 success += 1;
@@ -173,6 +181,34 @@ public class XyzwTokenMaintenanceService {
         }
     }
 
+    private String resolveWsUrl(String configuredWsUrl, String token) {
+        if (isBlank(configuredWsUrl)) {
+            return buildDefaultWsUrl(token);
+        }
+        String wsUrl = configuredWsUrl.trim();
+        String encoded = encodeToken(token);
+
+        int pIndex = wsUrl.indexOf("p=");
+        if (pIndex < 0) {
+            String sep = wsUrl.contains("?") ? "&" : "?";
+            return wsUrl + sep + "p=" + encoded;
+        }
+        int valueStart = pIndex + 2;
+        int valueEnd = wsUrl.indexOf('&', valueStart);
+        if (valueEnd < 0) {
+            valueEnd = wsUrl.length();
+        }
+        return wsUrl.substring(0, valueStart) + encoded + wsUrl.substring(valueEnd);
+    }
+
+    private String encodeToken(String token) {
+        try {
+            return URLEncoder.encode(token, "UTF-8");
+        } catch (UnsupportedEncodingException ex) {
+            throw new IllegalStateException("不支持的编码 UTF-8", ex);
+        }
+    }
+
     private String buildTokenLabel(XyzwUserToken token) {
         String name = token.getName();
         if (name == null || name.trim().isEmpty()) {
@@ -183,6 +219,21 @@ public class XyzwTokenMaintenanceService {
 
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
+    }
+
+    private String briefToken(String token) {
+        if (token == null) {
+            return "<null>";
+        }
+        String value = token.trim();
+        if (value.isEmpty()) {
+            return "<empty>";
+        }
+        int len = value.length();
+        if (len <= 16) {
+            return value + "(len=" + len + ")";
+        }
+        return value.substring(0, 6) + "..." + value.substring(len - 6) + "(len=" + len + ")";
     }
 
     private void ensureConnectedOrReconnect(String token, String wsUrl, String label, String stage) {

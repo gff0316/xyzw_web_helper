@@ -1,0 +1,9 @@
+* text=auto
+
+*.java text working-tree-encoding=UTF-8 eol=crlf
+*.xml text working-tree-encoding=UTF-8 eol=crlf
+*.yml text working-tree-encoding=UTF-8 eol=crlf
+*.yaml text working-tree-encoding=UTF-8 eol=crlf
+*.properties text working-tree-encoding=UTF-8 eol=crlf
+*.json text working-tree-encoding=UTF-8 eol=crlf
+*.md text working-tree-encoding=UTF-8 eol=crlf

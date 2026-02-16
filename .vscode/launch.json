@@ -1,0 +1,13 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "java",
+      "name": "Launch WebHelperApplication (UTF-8)",
+      "request": "launch",
+      "mainClass": "com.xyzw.webhelper.WebHelperApplication",
+      "console": "integratedTerminal",
+      "vmArgs": "-Dfile.encoding=UTF-8 -Dsun.jnu.encoding=UTF-8"
+    }
+  ]
+}
