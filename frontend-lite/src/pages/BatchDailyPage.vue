@@ -15,7 +15,7 @@
           <h1>批量日常任务</h1>
           <p>选择账号与任务设置，一键执行每日任务。</p>
           <p class="hint">
-            定时任务只在页面保持打开时执行，后续可迁移为后端定时任务。
+            定时规则请在右侧“后端调度配置”维护，本页只保留手动批量执行。
           </p>
         </div>
         <div class="header-actions">
@@ -85,13 +85,18 @@
           <div class="card settings-card">
             <div class="card-header">
               <div class="card-title">任务设置</div>
-              <div class="setting-inline">
-                <label>任务间隔(ms)</label>
-                <input
-                  type="number"
-                  min="0"
-                  v-model.number="delaySettings.taskDelay"
-                />
+              <div class="header-actions">
+                <div class="setting-inline">
+                  <label>任务间隔(ms)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    v-model.number="delaySettings.taskDelay"
+                  />
+                </div>
+                <button class="ghost" type="button" @click="resetDailySettings">
+                  恢复默认
+                </button>
               </div>
             </div>
             <div class="card-body">
@@ -126,118 +131,86 @@
                 </div>
               </div>
 
-              <div class="switch-group">
-                <label class="switch-row">
-                  <input type="checkbox" v-model="dailySettings.claimBottle" />
-                  <span>领取盐罐奖励</span>
-                </label>
-                <label class="switch-row">
-                  <input type="checkbox" v-model="dailySettings.claimHangUp" />
-                  <span>领取挂机奖励和加钟</span>
-                </label>
-                <label class="switch-row">
-                  <input type="checkbox" v-model="dailySettings.arenaEnable" />
-                  <span>竞技场任务</span>
-                </label>
-                <label class="switch-row">
-                  <input type="checkbox" v-model="dailySettings.openBox" />
-                  <span>开启宝箱</span>
-                </label>
-                <label class="switch-row">
-                  <input type="checkbox" v-model="dailySettings.claimEmail" />
-                  <span>领取邮件奖励</span>
-                </label>
-                <label class="switch-row">
-                  <input
-                    type="checkbox"
-                    v-model="dailySettings.blackMarketPurchase"
-                  />
-                  <span>黑市购买</span>
-                </label>
-                <label class="switch-row">
-                  <input type="checkbox" v-model="dailySettings.payRecruit" />
-                  <span>付费招募</span>
-                </label>
-              </div>
-            </div>
-          </div>
-
-          <div class="card schedule-card">
-            <div class="card-header">
-              <div class="card-title">定时任务</div>
-              <button class="ghost" type="button" @click="addSchedule">
-                新增定时任务
-              </button>
-            </div>
-            <div class="card-body">
-              <div class="schedule-form">
-                <div class="schedule-field">
-                  <label>名称</label>
-                  <input v-model="scheduleForm.name" placeholder="每日任务" />
-                </div>
-                <div class="schedule-field">
-                  <label>执行时间</label>
-                  <input type="time" v-model="scheduleForm.time" />
-                </div>
-                <div class="schedule-field">
-                  <label>账号数量</label>
-                  <span class="schedule-summary">
-                    {{ selectedTokenKeys.length }} 个
-                  </span>
-                </div>
-              </div>
-
-              <div class="schedule-list">
-                <div v-if="scheduledTasks.length === 0" class="card-empty">
-                  暂无定时任务
-                </div>
-                <div
-                  v-for="task in scheduledTasks"
-                  :key="task.id"
-                  class="schedule-item"
-                >
-                  <div>
-                    <div class="schedule-name">{{ task.name }}</div>
-                    <div class="schedule-meta">
-                      每日 {{ task.time }} · 账号 {{ task.tokenCount }} 个
-                    </div>
-                    <div class="schedule-meta">
-                      状态：{{ task.enabled ? "启用" : "停用" }}
-                    </div>
-                    <div class="schedule-meta">
-                      上次执行：{{ task.lastRunAt || "未执行" }}
-                    </div>
-                    <div v-if="task.lastStatus" class="schedule-meta">
-                      结果：{{ task.lastStatus }}
+              <div class="setting-section">
+                <div class="setting-section-title">基础收益任务</div>
+                <div class="switch-group">
+                  <div class="setting-option">
+                    <label class="switch-row">
+                      <input type="checkbox" v-model="dailySettings.claimHangUp" />
+                      <span>领取挂机奖励和加钟</span>
+                    </label>
+                    <div class="setting-desc">
+                      先领挂机，再执行多次加钟回调，适合长期挂机账号。
                     </div>
                   </div>
-                  <div class="schedule-actions">
-                    <button
-                      class="ghost"
-                      type="button"
-                      @click="toggleSchedule(task)"
-                    >
-                      {{ task.enabled ? "停用" : "启用" }}
-                    </button>
-                    <button
-                      class="ghost"
-                      type="button"
-                      @click="runSchedule(task)"
-                    >
-                      立即执行
-                    </button>
-                    <button
-                      class="ghost danger"
-                      type="button"
-                      @click="removeSchedule(task.id)"
-                    >
-                      删除
-                    </button>
+                  <div class="setting-option">
+                    <label class="switch-row">
+                      <input type="checkbox" v-model="dailySettings.claimBottle" />
+                      <span>重启并领取盐罐</span>
+                    </label>
+                    <div class="setting-desc">
+                      执行停止/启动/领取流程；无奖励时会自动跳过。
+                    </div>
+                  </div>
+                  <div class="setting-option">
+                    <label class="switch-row">
+                      <input type="checkbox" v-model="dailySettings.openBox" />
+                      <span>开启宝箱</span>
+                    </label>
+                    <div class="setting-desc">
+                      使用固定宝箱参数，失败会继续后续流程。
+                    </div>
+                  </div>
+                  <div class="setting-option">
+                    <label class="switch-row">
+                      <input type="checkbox" v-model="dailySettings.claimEmail" />
+                      <span>领取邮件奖励</span>
+                    </label>
+                    <div class="setting-desc">
+                      执行一键领取附件，减少遗漏奖励。
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="setting-section">
+                <div class="setting-section-title">战斗与成长任务</div>
+                <div class="switch-group">
+                  <div class="setting-option">
+                    <label class="switch-row">
+                      <input type="checkbox" v-model="dailySettings.arenaEnable" />
+                      <span>竞技场任务</span>
+                    </label>
+                    <div class="setting-desc">
+                      使用上方竞技场阵容，自动找目标并发起战斗。
+                    </div>
+                  </div>
+                  <div class="setting-option">
+                    <label class="switch-row">
+                      <input type="checkbox" v-model="dailySettings.payRecruit" />
+                      <span>付费招募</span>
+                    </label>
+                    <div class="setting-desc">
+                      在免费招募后执行一次付费招募；冷却时自动跳过。
+                    </div>
+                  </div>
+                  <div class="setting-option">
+                    <label class="switch-row">
+                      <input
+                        type="checkbox"
+                        v-model="dailySettings.blackMarketPurchase"
+                      />
+                      <span>黑市购买</span>
+                    </label>
+                    <div class="setting-desc">
+                      执行一次黑市购买指令，失败不会中断整轮任务。
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
           </div>
+
         </div>
 
         <div class="right-panel">
@@ -261,7 +234,7 @@
                 >
                   <div class="job-config-head">
                     <div class="job-config-name">
-                      {{ cfg.jobName || cfg.jobKey }}
+                      {{ cfg.jobName || formatBackendJobName(cfg.jobKey) }}
                     </div>
                     <label class="switch-row">
                       <input type="checkbox" v-model="cfg.enabled" />
@@ -279,51 +252,6 @@
                       </button>
                     </div>
                   </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="card log-card">
-            <div class="card-header">
-              <div class="card-title">执行日志</div>
-              <div class="header-actions">
-                <button class="ghost" type="button" @click="fetchBackendLogs">
-                  刷新后端日志
-                </button>
-                <button class="ghost" type="button" @click="clearLogs">
-                  清空前端日志
-                </button>
-              </div>
-            </div>
-            <div class="card-body log-body">
-              <div class="sub-title">前端执行日志</div>
-              <div v-if="logEntries.length === 0" class="card-empty">暂无前端日志</div>
-              <div v-else class="log-list">
-                <div
-                  v-for="(entry, index) in logEntries"
-                  :key="`${entry.time}-${index}`"
-                  class="log-item"
-                  :class="entry.type"
-                >
-                  <span class="log-time">{{ entry.time }}</span>
-                  <span class="log-text">{{ entry.message }}</span>
-                </div>
-              </div>
-
-              <div class="sub-title">后端审计日志</div>
-              <div v-if="backendLogs.length === 0" class="card-empty">暂无后端日志</div>
-              <div v-else class="log-list">
-                <div
-                  v-for="item in backendLogs"
-                  :key="item.id"
-                  class="log-item"
-                  :class="normalizeBackendLogType(item.status)"
-                >
-                  <span class="log-time">{{ formatBackendLogTime(item.startTime) }}</span>
-                  <span class="log-text">
-                    [{{ item.jobKey }}] {{ item.status }} · {{ item.message || "ok" }}
-                  </span>
                 </div>
               </div>
             </div>
@@ -354,18 +282,11 @@ const selectedTokenKeys = ref([]);
 const logEntries = ref([]);
 const isRunning = ref(false);
 const stopRequested = ref(false);
-const scheduledTasks = ref([]);
 const jobConfigs = ref([]);
 const jobConfigsLoading = ref(false);
-const backendLogs = ref([]);
 
 const delaySettings = reactive({
   taskDelay: 500,
-});
-
-const scheduleForm = reactive({
-  name: "每日任务",
-  time: "08:00",
 });
 
 const defaultDailySettings = {
@@ -379,6 +300,20 @@ const defaultDailySettings = {
   claimHangUp: true,
   claimEmail: true,
   blackMarketPurchase: true,
+};
+
+const backendJobNameMap = {
+  batchDailyRunner: "批量日常扫描",
+  batchDailyTask: "批量日常任务",
+  tokenMaintenanceRunner: "罐子和挂机奖励",
+  tokenRefreshRunner: "Token 刷新",
+};
+
+const backendStatusTextMap = {
+  SUCCESS: "执行成功",
+  FAILED: "执行失败",
+  PARTIAL: "部分成功",
+  RUNNING: "执行中",
 };
 
 const dailySettings = reactive({ ...defaultDailySettings });
@@ -409,10 +344,6 @@ const addLog = (message, type = "info") => {
   if (logEntries.value.length > 200) {
     logEntries.value.length = 200;
   }
-};
-
-const clearLogs = () => {
-  logEntries.value = [];
 };
 
 const formatBinName = (bin) => {
@@ -504,14 +435,6 @@ const buildTokenJson = (token) => {
   });
 };
 
-const buildTokenPayload = (token) => {
-  if (!token?.token) return null;
-  return {
-    name: token.displayName || token.uuid || token.id || "未命名账号",
-    tokenData: decodeTokenFromBase64(token.token),
-  };
-};
-
 const sleep = (ms) =>
   new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -546,6 +469,8 @@ const runBatchTokens = async (tokenList, settings, label = "批量日常任务")
   isRunning.value = true;
   stopRequested.value = false;
   addLog(`${label}开始执行，共 ${tokenList.length} 个账号。`, "info");
+  let successCount = 0;
+  let failCount = 0;
 
   for (const token of tokenList) {
     if (stopRequested.value) {
@@ -554,19 +479,20 @@ const runBatchTokens = async (tokenList, settings, label = "批量日常任务")
     }
     const name = token.displayName || token.uuid || token.id || "未知账号";
     try {
-      addLog(`开始执行：${name}`, "info");
       const data = await runDailyForToken(token, settings);
       const executedCount = Number(data.executedCount || 0);
       addLog(`完成：${name}，已发送 ${executedCount} 个指令。`, "success");
+      successCount += 1;
     } catch (error) {
       addLog(`失败：${name}，${error.message}`, "error");
+      failCount += 1;
     }
     await sleep(delaySettings.taskDelay);
   }
 
   isRunning.value = false;
   stopRequested.value = false;
-  addLog(`${label}执行结束。`, "success");
+  addLog(`${label}执行结束：成功 ${successCount}，失败 ${failCount}。`, "success");
 };
 
 const startBatch = async () => {
@@ -596,113 +522,9 @@ const loadDailySettings = () => {
   }
 };
 
-const fetchSchedules = async () => {
-  if (!ensureAuth()) return;
-  try {
-    const resp = await fetch("/api/v1/xyzw/batch/daily/tasks", {
-      headers: { ...authHeaders() },
-    });
-    const payload = await resp.json();
-    if (!resp.ok || !payload.success) {
-      throw new Error(payload.message || "获取定时任务失败");
-    }
-    scheduledTasks.value = payload?.data?.tasks || [];
-  } catch (error) {
-    addLog(error.message || "获取定时任务失败", "error");
-  }
-};
-
-const addSchedule = async () => {
-  if (!scheduleForm.time) {
-    addLog("请填写执行时间。", "warning");
-    return;
-  }
-  if (selectedTokenKeys.value.length === 0) {
-    addLog("请先选择账号。", "warning");
-    return;
-  }
-  const tokenPayloads = selectedTokens.value
-    .map((token) => buildTokenPayload(token))
-    .filter(Boolean);
-  if (tokenPayloads.length === 0) {
-    addLog("账号数据缺失，无法创建任务。", "error");
-    return;
-  }
-  try {
-    const resp = await fetch("/api/v1/xyzw/batch/daily/tasks", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({
-        name: scheduleForm.name || "每日任务",
-        time: scheduleForm.time,
-        enabled: true,
-        taskDelayMs: delaySettings.taskDelay,
-        tokens: tokenPayloads,
-        settings: { ...dailySettings },
-      }),
-    });
-    const payload = await resp.json();
-    if (!resp.ok || !payload.success) {
-      throw new Error(payload.message || "创建定时任务失败");
-    }
-    addLog("已新增定时任务。", "success");
-    await fetchSchedules();
-  } catch (error) {
-    addLog(error.message || "创建定时任务失败", "error");
-  }
-};
-
-const removeSchedule = async (id) => {
-  if (!ensureAuth()) return;
-  try {
-    const resp = await fetch(`/api/v1/xyzw/batch/daily/tasks/${id}`, {
-      method: "DELETE",
-      headers: { ...authHeaders() },
-    });
-    const payload = await resp.json();
-    if (!resp.ok || !payload.success) {
-      throw new Error(payload.message || "删除任务失败");
-    }
-    addLog("已删除定时任务。", "success");
-    await fetchSchedules();
-  } catch (error) {
-    addLog(error.message || "删除任务失败", "error");
-  }
-};
-
-const toggleSchedule = async (task) => {
-  if (!ensureAuth()) return;
-  try {
-    const resp = await fetch(`/api/v1/xyzw/batch/daily/tasks/${task.id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ enabled: !task.enabled }),
-    });
-    const payload = await resp.json();
-    if (!resp.ok || !payload.success) {
-      throw new Error(payload.message || "更新任务失败");
-    }
-    await fetchSchedules();
-  } catch (error) {
-    addLog(error.message || "更新任务失败", "error");
-  }
-};
-
-const runSchedule = async (task) => {
-  if (!ensureAuth()) return;
-  try {
-    const resp = await fetch(`/api/v1/xyzw/batch/daily/tasks/${task.id}/run`, {
-      method: "POST",
-      headers: { ...authHeaders() },
-    });
-    const payload = await resp.json();
-    if (!resp.ok || !payload.success) {
-      throw new Error(payload.message || "触发执行失败");
-    }
-    addLog(`已触发任务：${task.name}`, "success");
-  } catch (error) {
-    addLog(error.message || "触发执行失败", "error");
-  }
+const resetDailySettings = () => {
+  Object.assign(dailySettings, defaultDailySettings);
+  addLog("任务设置已恢复默认值。", "success");
 };
 
 const fetchJobConfigs = async () => {
@@ -743,7 +565,7 @@ const saveJobConfig = async (cfg) => {
     if (!resp.ok || !payload.success) {
       throw new Error(payload.message || "保存调度配置失败");
     }
-    addLog(`已保存后端调度配置：${cfg.jobKey}`, "success");
+    addLog(`已保存后端调度配置：${formatBackendJobName(cfg.jobKey)}`, "success");
     await fetchJobConfigs();
   } catch (error) {
     addLog(error.message || "保存调度配置失败", "error");
@@ -761,39 +583,16 @@ const runBackendJob = async (jobKey) => {
     if (!resp.ok || !payload.success) {
       throw new Error(payload.message || "触发后端任务失败");
     }
-    addLog(`已触发后端任务：${jobKey}`, "success");
-    await fetchBackendLogs();
+    addLog(`已触发后端任务：${formatBackendJobName(jobKey)}`, "success");
   } catch (error) {
     addLog(error.message || "触发后端任务失败", "error");
   }
 };
 
-const fetchBackendLogs = async () => {
-  if (!ensureAuth()) return;
-  try {
-    const resp = await fetch("/api/v1/jobs/logs?limit=100", {
-      headers: { ...authHeaders() },
-    });
-    const payload = await resp.json();
-    if (!resp.ok || !payload.success) {
-      throw new Error(payload.message || "获取后端日志失败");
-    }
-    backendLogs.value = payload?.data?.logs || [];
-  } catch (error) {
-    addLog(error.message || "获取后端日志失败", "error");
-  }
-};
-
-const formatBackendLogTime = (value) => {
-  if (!value) return "--";
-  return String(value).replace("T", " ").replace(".000", "");
-};
-
-const normalizeBackendLogType = (status) => {
-  if (status === "SUCCESS") return "success";
-  if (status === "FAILED") return "error";
-  if (status === "PARTIAL") return "warning";
-  return "info";
+const formatBackendJobName = (jobKey) => {
+  const raw = String(jobKey || "").trim();
+  if (!raw) return "未知任务";
+  return backendJobNameMap[raw] || raw;
 };
 
 watch(
@@ -807,9 +606,7 @@ watch(
 onMounted(() => {
   loadDailySettings();
   fetchTokens();
-  fetchSchedules();
   fetchJobConfigs();
-  fetchBackendLogs();
 });
 
 // no-op
@@ -1022,75 +819,69 @@ onMounted(() => {
   border: 1px solid rgba(148, 163, 184, 0.6);
 }
 
+.setting-section {
+  display: grid;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(148, 163, 184, 0.35);
+}
+
+.setting-section + .setting-section {
+  margin-top: 4px;
+}
+
+.setting-section-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
 .switch-group {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.setting-option {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(203, 213, 225, 0.9);
+  background: rgba(248, 250, 252, 0.75);
 }
 
 .switch-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   font-size: 13px;
   color: #475569;
 }
 
-.schedule-form {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 12px;
+.switch-row input {
+  margin-top: 2px;
 }
 
-.schedule-field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 13px;
-  color: #475569;
-}
-
-.schedule-field input {
-  padding: 6px 8px;
-  border-radius: 10px;
-  border: 1px solid rgba(148, 163, 184, 0.6);
-}
-
-.schedule-summary {
-  font-weight: 600;
-  color: #1e293b;
-}
-
-.schedule-list {
-  display: grid;
-  gap: 10px;
-}
-
-.schedule-item {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid rgba(226, 232, 240, 0.9);
-  background: rgba(248, 250, 252, 0.8);
-}
-
-.schedule-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
+.switch-row.compact {
   align-items: center;
-}
-
-.schedule-name {
-  font-weight: 600;
-  font-size: 13px;
-}
-
-.schedule-meta {
   font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(203, 213, 225, 0.9);
+  background: rgba(248, 250, 252, 0.8);
+  color: #334155;
+}
+
+.switch-row.compact input {
+  margin-top: 0;
+}
+
+.setting-desc {
+  font-size: 12px;
+  line-height: 1.4;
   color: #64748b;
+  padding-left: 22px;
 }
 
 .job-config-list {
@@ -1188,6 +979,10 @@ onMounted(() => {
 @media (max-width: 960px) {
   .main-grid {
     grid-template-columns: 1fr;
+  }
+
+  .switch-row.compact {
+    padding: 3px 7px;
   }
 }
 </style>

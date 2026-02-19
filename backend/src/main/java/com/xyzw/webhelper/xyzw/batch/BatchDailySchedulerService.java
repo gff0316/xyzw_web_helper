@@ -1,8 +1,15 @@
 package com.xyzw.webhelper.xyzw.batch;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.xyzw.webhelper.auth.AuthUser;
+import com.xyzw.webhelper.auth.AuthUserMapper;
 import com.xyzw.webhelper.xyzw.XyzwWsController;
+import com.xyzw.webhelper.xyzw.XyzwUserToken;
+import com.xyzw.webhelper.xyzw.XyzwUserTokenMapper;
+import com.xyzw.webhelper.xyzw.XyzwTaskLogService;
 import com.xyzw.webhelper.xyzw.dto.XyzwDailyTaskRequest;
+import com.xyzw.webhelper.xyzw.ws.XyzwTokenPayloadDecoder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -28,19 +35,34 @@ public class BatchDailySchedulerService {
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final DateTimeFormatter DATETIME_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("HH:mm");
+    private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<Map<String, Object>>() {
+    };
 
     private final BatchDailyTaskStore store;
     private final XyzwWsController wsController;
     private final JobAuditService auditService;
+    private final AuthUserMapper authUserMapper;
+    private final XyzwUserTokenMapper userTokenMapper;
+    private final XyzwTaskLogService taskLogService;
     private final ObjectMapper mapper = new ObjectMapper();
     private final Map<Long, BatchDailyTask> tasks = new ConcurrentHashMap<Long, BatchDailyTask>();
     private final Set<Long> runningTasks = Collections.newSetFromMap(new ConcurrentHashMap<Long, Boolean>());
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
 
-    public BatchDailySchedulerService(BatchDailyTaskStore store, XyzwWsController wsController, JobAuditService auditService) {
+    public BatchDailySchedulerService(
+        BatchDailyTaskStore store,
+        XyzwWsController wsController,
+        JobAuditService auditService,
+        AuthUserMapper authUserMapper,
+        XyzwUserTokenMapper userTokenMapper,
+        XyzwTaskLogService taskLogService
+    ) {
         this.store = store;
         this.wsController = wsController;
         this.auditService = auditService;
+        this.authUserMapper = authUserMapper;
+        this.userTokenMapper = userTokenMapper;
+        this.taskLogService = taskLogService;
     }
 
     @PostConstruct
@@ -108,13 +130,14 @@ public class BatchDailySchedulerService {
         return true;
     }
 
-    public void runDueTasks() {
-        runDueTasks("定时触发");
+    public int runDueTasks() {
+        return runDueTasks("定时触发");
     }
 
-    public void runDueTasks(String trigger) {
+    public int runDueTasks(String trigger) {
         String nowTime = LocalTime.now().format(TIME_FMT);
         String today = LocalDate.now().format(DATE_FMT);
+        int submitted = 0;
         for (BatchDailyTask task : tasks.values()) {
             if (!task.isEnabled()) {
                 continue;
@@ -126,7 +149,78 @@ public class BatchDailySchedulerService {
                 continue;
             }
             submitTask(task, trigger);
+            submitted++;
         }
+        return submitted;
+    }
+
+    public int runAllEnabledTasks(String trigger) {
+        int submitted = 0;
+        for (BatchDailyTask task : tasks.values()) {
+            if (!task.isEnabled()) {
+                continue;
+            }
+            submitTask(task, trigger);
+            submitted++;
+        }
+        return submitted;
+    }
+
+    public int runFallbackFromUserTokens(String username, String trigger) {
+        if (isBlank(username)) {
+            return 0;
+        }
+        AuthUser user = authUserMapper.findByUsername(username.trim());
+        if (user == null || user.getId() == null) {
+            logger.warn("批量日常任务回退失败：用户不存在 username={}", username);
+            return 0;
+        }
+        List<XyzwUserToken> userTokens = userTokenMapper.findByUserId(user.getId());
+        if (userTokens == null || userTokens.isEmpty()) {
+            logger.warn("批量日常任务回退失败：用户无可用 token username={} userId={}", username, user.getId());
+            return 0;
+        }
+
+        List<BatchDailyToken> tokens = new ArrayList<BatchDailyToken>();
+        for (XyzwUserToken userToken : userTokens) {
+            if (userToken == null || isBlank(userToken.getToken())) {
+                continue;
+            }
+            Map<String, Object> tokenData = parseTokenData(userToken.getToken());
+            if (!containsRoleToken(tokenData)) {
+                logger.warn("批量日常任务回退跳过无效 token id={} name={}", userToken.getId(), userToken.getName());
+                continue;
+            }
+            BatchDailyToken token = new BatchDailyToken();
+            token.setName(isBlank(userToken.getName()) ? "token-" + userToken.getId() : userToken.getName().trim());
+            token.setTokenData(tokenData);
+            Long sessId = asLong(tokenData.get("sessId"));
+            Long connId = asLong(tokenData.get("connId"));
+            if (sessId != null && sessId > 0) {
+                token.setSessId(sessId);
+            }
+            if (connId != null && connId > 0) {
+                token.setConnId(connId);
+            }
+            tokens.add(token);
+        }
+        if (tokens.isEmpty()) {
+            logger.warn("批量日常任务回退失败：user_tokens 均不可解析 username={} userId={}", username, user.getId());
+            return 0;
+        }
+
+        BatchDailyTask task = new BatchDailyTask();
+        task.setId(nextFallbackTaskId());
+        task.setUserId(user.getId());
+        task.setName("批量日常任务(自动回退)");
+        task.setEnabled(true);
+        task.setTaskDelayMs(500);
+        task.setTokens(tokens);
+        task.setSettings(null);
+
+        submitTask(task, trigger + ":fallback");
+        logger.info("批量日常任务回退提交成功 username={} userId={} tokenCount={}", username, user.getId(), tokens.size());
+        return tokens.size();
     }
 
     private void submitTask(BatchDailyTask task, String trigger) {
@@ -160,22 +254,48 @@ public class BatchDailySchedulerService {
         logger.info("批量日常任务开始 name={} trigger={} tokenCount={}", task.getName(), trigger, tokens.size());
         for (BatchDailyToken token : tokens) {
             String tokenName = token.getName() == null ? "未命名账号" : token.getName();
+            String tokenJson = null;
             try {
-                String tokenJson = buildTokenJson(token);
+                tokenJson = buildTokenJson(token);
                 XyzwDailyTaskRequest req = new XyzwDailyTaskRequest();
                 req.setToken(tokenJson);
+                req.setTaskName((task.getName() == null ? "批量日常任务" : task.getName()) + "/" + tokenName);
                 req.setSettings(task.getSettings());
                 Map<String, Object> body = wsController.runDailyTasks(req).getBody();
                 if (body != null && Boolean.TRUE.equals(body.get("success"))) {
                     success++;
                     logger.info("批量日常任务完成 token={}", tokenName);
+                    taskLogService.recordTaskResult(
+                        tokenJson,
+                        XyzwTaskLogService.TYPE_SCHEDULED_TASK,
+                        task.getName(),
+                        tokenName,
+                        true,
+                        "执行成功"
+                    );
                 } else {
                     fail++;
                     logger.warn("批量日常任务失败 token={}", tokenName);
+                    taskLogService.recordTaskResult(
+                        tokenJson,
+                        XyzwTaskLogService.TYPE_SCHEDULED_TASK,
+                        task.getName(),
+                        tokenName,
+                        false,
+                        "执行失败"
+                    );
                 }
             } catch (Exception ex) {
                 fail++;
                 logger.warn("批量日常任务异常 token={} msg={}", tokenName, ex.getMessage());
+                taskLogService.recordTaskResult(
+                    resolveTokenForLog(tokenJson, token),
+                    XyzwTaskLogService.TYPE_SCHEDULED_TASK,
+                    task.getName(),
+                    tokenName,
+                    false,
+                    ex.getMessage()
+                );
             }
             sleep(task.getTaskDelayMs());
         }
@@ -250,9 +370,78 @@ public class BatchDailySchedulerService {
             }
             task.setTokens(tokens);
         }
-        if (request.getSettings() != null) {
-            task.setSettings(request.getSettings());
+        task.setSettings(null);
+    }
+
+    private String resolveTokenForLog(String tokenJson, BatchDailyToken token) {
+        if (!isBlank(tokenJson)) {
+            return tokenJson;
         }
+        if (token == null || token.getTokenData() == null || token.getTokenData().isEmpty()) {
+            return "";
+        }
+        try {
+            return mapper.writeValueAsString(token.getTokenData());
+        } catch (Exception ex) {
+            return "";
+        }
+    }
+
+    private Long nextFallbackTaskId() {
+        return -1L * System.currentTimeMillis() * 100 - ThreadLocalRandom.current().nextInt(100);
+    }
+
+    private Map<String, Object> parseTokenData(String rawToken) {
+        if (isBlank(rawToken)) {
+            return Collections.emptyMap();
+        }
+        String token = rawToken.trim();
+        Map<String, Object> payload = parseJsonToken(token);
+        if (!containsRoleToken(payload)) {
+            payload = XyzwTokenPayloadDecoder.decodeFromBase64Token(token);
+        }
+        if (!containsRoleToken(payload)) {
+            return Collections.emptyMap();
+        }
+        return new java.util.LinkedHashMap<String, Object>(payload);
+    }
+
+    private Map<String, Object> parseJsonToken(String token) {
+        if (isBlank(token) || token.charAt(0) != '{') {
+            return Collections.emptyMap();
+        }
+        try {
+            Map<String, Object> parsed = mapper.readValue(token, MAP_TYPE);
+            return parsed == null ? Collections.<String, Object>emptyMap() : parsed;
+        } catch (Exception ex) {
+            return Collections.emptyMap();
+        }
+    }
+
+    private boolean containsRoleToken(Map<String, Object> payload) {
+        if (payload == null || payload.isEmpty()) {
+            return false;
+        }
+        Object value = payload.get("roleToken");
+        return value instanceof String && !((String) value).trim().isEmpty();
+    }
+
+    private Long asLong(Object value) {
+        if (value instanceof Number) {
+            return ((Number) value).longValue();
+        }
+        if (value instanceof String) {
+            try {
+                return Long.parseLong((String) value);
+            } catch (NumberFormatException ex) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
     }
 
     private BatchDailyTaskResponse toResponse(BatchDailyTask task) {

@@ -5,6 +5,7 @@ import com.xyzw.webhelper.xyzw.dto.XyzwCarRequest;
 import com.xyzw.webhelper.xyzw.dto.XyzwDailyTaskRequest;
 import com.xyzw.webhelper.xyzw.dto.XyzwTeamRequest;
 import com.xyzw.webhelper.xyzw.dto.XyzwWsConnectRequest;
+import com.xyzw.webhelper.xyzw.XyzwTaskLogService;
 import com.xyzw.webhelper.xyzw.ws.XyzwWsManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,11 +30,16 @@ import java.util.Map;
 public class XyzwWsController {
     private static final Logger logger = LoggerFactory.getLogger(XyzwWsController.class);
     private static final long CONNECT_TIMEOUT_MS = 6000;
+    private static final long DAILY_WAIT_TIMEOUT_MS = 5000;
+    private static final long DAILY_STEP_MIN_DELAY_MS = 800;
+    private static final long RECRUIT_STEP_DELAY_MS = 1200;
 
     private final XyzwWsManager wsManager;
+    private final XyzwTaskLogService taskLogService;
 
-    public XyzwWsController(XyzwWsManager wsManager) {
+    public XyzwWsController(XyzwWsManager wsManager, XyzwTaskLogService taskLogService) {
         this.wsManager = wsManager;
+        this.taskLogService = taskLogService;
     }
 
     @PostMapping("/connect")
@@ -457,33 +463,62 @@ public class XyzwWsController {
         if (isBlank(token)) {
             return ResponseEntity.badRequest().body(build(false, "token 不能为空", null));
         }
-        if (!ensureConnected(token)) {
-            logger.warn("执行每日任务失败：WebSocket 连接超时 token={}", token);
-            return ResponseEntity.badRequest().body(build(false, "WebSocket 连接失败", null));
-        }
-
-        XyzwDailyTaskRequest.DailySettings settings = request.getSettings();
-        boolean claimBottle = settings == null || settings.getClaimBottle() == null || settings.getClaimBottle();
-        boolean payRecruit = settings != null && Boolean.TRUE.equals(settings.getPayRecruit());
-        boolean openBox = settings == null || settings.getOpenBox() == null || settings.getOpenBox();
-        boolean arenaEnable = settings != null && settings.getArenaEnable() != null && settings.getArenaEnable();
-        boolean claimHangUp = settings == null || settings.getClaimHangUp() == null || settings.getClaimHangUp();
-        boolean claimEmail = settings == null || settings.getClaimEmail() == null || settings.getClaimEmail();
-        boolean blackMarketPurchase = settings != null && Boolean.TRUE.equals(settings.getBlackMarketPurchase());
-        int arenaFormation = normalizeTeamId(settings == null ? null : settings.getArenaFormation());
-        int bossFormation = normalizeTeamId(settings == null ? null : settings.getBossFormation());
-        int bossTimes = normalizeBossTimes(settings == null ? null : settings.getBossTimes());
-
-        List<String> executed = new ArrayList<String>();
-        long roleVersionBefore = wsManager.getRoleInfoVersion(token);
+        String requestedTaskName = normalizeText(request.getTaskName());
+        boolean manualTask = requestedTaskName == null;
+        String effectiveTaskName = manualTask ? "手工任务/当前账号" : requestedTaskName;
+        wsManager.bindTaskLabel(token, effectiveTaskName);
 
         try {
+            if (!ensureConnected(token)) {
+                logger.warn("执行每日任务失败：WebSocket 连接超时 token={}", token);
+                return ResponseEntity.badRequest().body(build(false, "WebSocket 连接失败", null));
+            }
+
+            XyzwDailyTaskRequest.DailySettings settings = request.getSettings();
+            boolean claimBottle = settings == null || settings.getClaimBottle() == null || settings.getClaimBottle();
+            boolean payRecruit = settings != null && Boolean.TRUE.equals(settings.getPayRecruit());
+            boolean openBox = settings == null || settings.getOpenBox() == null || settings.getOpenBox();
+            boolean arenaEnable = settings != null && settings.getArenaEnable() != null && settings.getArenaEnable();
+            boolean claimHangUp = settings == null || settings.getClaimHangUp() == null || settings.getClaimHangUp();
+            boolean claimEmail = settings == null || settings.getClaimEmail() == null || settings.getClaimEmail();
+            boolean blackMarketPurchase = settings != null && Boolean.TRUE.equals(settings.getBlackMarketPurchase());
+            int arenaFormation = normalizeTeamId(settings == null ? null : settings.getArenaFormation());
+            int bossFormation = normalizeTeamId(settings == null ? null : settings.getBossFormation());
+            int bossTimes = normalizeBossTimes(settings == null ? null : settings.getBossTimes());
+
+            List<String> executed = new ArrayList<String>();
+            long roleVersionBefore = wsManager.getRoleInfoVersion(token);
+
             // 基础：分享、送金币、招募、点金
-            sendDaily(token, executed, "system_mysharecallback", mapOf("isSkipShareCard", true, "type", 2), 250);
-            sendDaily(token, executed, "friend_batch", mapOf(), 250);
-            sendDaily(token, executed, "hero_recruit", mapOf("recruitType", 3, "recruitNumber", 1), 300);
+            sendDailyAndWait(
+                token,
+                executed,
+                "system_mysharecallback",
+                mapOf("isSkipShareCard", true, "type", 2),
+                DAILY_WAIT_TIMEOUT_MS,
+                250,
+                "syncresp"
+            );
+            sendDailyAndWait(token, executed, "friend_batch", mapOf(), DAILY_WAIT_TIMEOUT_MS, 250, "friend_batchresp");
+            sendDailyAndWait(
+                token,
+                executed,
+                "hero_recruit",
+                mapOf("recruitType", 3, "recruitNumber", 1),
+                DAILY_WAIT_TIMEOUT_MS,
+                RECRUIT_STEP_DELAY_MS,
+                "hero_recruitresp"
+            );
             if (payRecruit) {
-                sendDaily(token, executed, "hero_recruit", mapOf("recruitType", 1, "recruitNumber", 1), 300);
+                sendDailyAndWait(
+                    token,
+                    executed,
+                    "hero_recruit",
+                    mapOf("recruitType", 1, "recruitNumber", 1),
+                    DAILY_WAIT_TIMEOUT_MS,
+                    RECRUIT_STEP_DELAY_MS,
+                    "hero_recruitresp"
+                );
             }
             sendDaily(token, executed, "system_buygold", mapOf("buyNum", 1), 220);
             sendDaily(token, executed, "system_buygold", mapOf("buyNum", 1), 220);
@@ -491,23 +526,98 @@ public class XyzwWsController {
 
             // 挂机
             if (claimHangUp) {
-                sendDaily(token, executed, "system_claimhangupreward", mapOf(), 250);
-                sendDaily(token, executed, "system_mysharecallback", mapOf("isSkipShareCard", true, "type", 2), 200);
-                sendDaily(token, executed, "system_mysharecallback", mapOf("isSkipShareCard", true, "type", 2), 200);
-                sendDaily(token, executed, "system_mysharecallback", mapOf("isSkipShareCard", true, "type", 2), 200);
-                sendDaily(token, executed, "system_mysharecallback", mapOf("isSkipShareCard", true, "type", 2), 200);
+                sendDailyAndWait(
+                    token,
+                    executed,
+                    "system_claimhangupreward",
+                    mapOf(),
+                    DAILY_WAIT_TIMEOUT_MS,
+                    250,
+                    "system_claimhanguprewardresp"
+                );
+                sendDailyAndWait(
+                    token,
+                    executed,
+                    "system_mysharecallback",
+                    mapOf("isSkipShareCard", true, "type", 2),
+                    DAILY_WAIT_TIMEOUT_MS,
+                    200,
+                    "syncresp"
+                );
+                sendDailyAndWait(
+                    token,
+                    executed,
+                    "system_mysharecallback",
+                    mapOf("isSkipShareCard", true, "type", 2),
+                    DAILY_WAIT_TIMEOUT_MS,
+                    200,
+                    "syncresp"
+                );
+                sendDailyAndWait(
+                    token,
+                    executed,
+                    "system_mysharecallback",
+                    mapOf("isSkipShareCard", true, "type", 2),
+                    DAILY_WAIT_TIMEOUT_MS,
+                    200,
+                    "syncresp"
+                );
+                sendDailyAndWait(
+                    token,
+                    executed,
+                    "system_mysharecallback",
+                    mapOf("isSkipShareCard", true, "type", 2),
+                    DAILY_WAIT_TIMEOUT_MS,
+                    200,
+                    "syncresp"
+                );
             }
 
             // 罐子
-            sendDaily(token, executed, "bottlehelper_stop", mapOf("bottleType", 0), 200);
-            sendDaily(token, executed, "bottlehelper_start", mapOf("bottleType", 0), 250);
+            sendDailyAndWait(
+                token,
+                executed,
+                "bottlehelper_stop",
+                mapOf("bottleType", 0),
+                DAILY_WAIT_TIMEOUT_MS,
+                200,
+                "bottlehelper_stopresp"
+            );
+            sendDailyAndWait(
+                token,
+                executed,
+                "bottlehelper_start",
+                mapOf("bottleType", 0),
+                DAILY_WAIT_TIMEOUT_MS,
+                250,
+                "bottlehelper_startresp",
+                "syncresp"
+            );
             if (claimBottle) {
-                sendDaily(token, executed, "bottlehelper_claim", mapOf("bottleType", 0), 250);
+                sendDailyAndWaitOptional(
+                    token,
+                    executed,
+                    "bottlehelper_claim",
+                    mapOf("bottleType", 0),
+                    DAILY_WAIT_TIMEOUT_MS,
+                    250,
+                    "bottlehelper_claimresp",
+                    "syncresp"
+                );
             }
 
             // 宝箱
             if (openBox) {
-                sendDaily(token, executed, "item_openbox", mapOf("itemId", 2001, "number", 10), 250);
+                sendDailyAndWait(
+                    token,
+                    executed,
+                    "item_openbox",
+                    mapOf("itemId", 2001, "number", 10),
+                    DAILY_WAIT_TIMEOUT_MS,
+                    250,
+                    "item_openboxresp",
+                    "syncresp"
+                );
             }
 
             // 竞技场
@@ -535,18 +645,65 @@ public class XyzwWsController {
 
             // 邮件、黑市
             if (claimEmail) {
-                sendDaily(token, executed, "mail_claimallattachment", mapOf(), 250);
+                sendDailyAndWait(
+                    token,
+                    executed,
+                    "mail_claimallattachment",
+                    mapOf(),
+                    DAILY_WAIT_TIMEOUT_MS,
+                    250,
+                    "mail_claimallattachmentresp",
+                    "syncresp"
+                );
             }
             if (blackMarketPurchase) {
-                sendDaily(token, executed, "store_purchase", mapOf("goodsId", 1), 300);
+                sendDailyAndWait(
+                    token,
+                    executed,
+                    "store_purchase",
+                    mapOf("goodsId", 1),
+                    DAILY_WAIT_TIMEOUT_MS,
+                    300,
+                    "store_buyresp",
+                    "syncresp"
+                );
             }
 
             // 任务奖励
             for (int taskId = 1; taskId <= 10; taskId++) {
-                sendDaily(token, executed, "task_claimdailypoint", mapOf("taskId", taskId), 180);
+                sendDailyAndWaitOptional(
+                    token,
+                    executed,
+                    "task_claimdailypoint",
+                    mapOf("taskId", taskId),
+                    DAILY_WAIT_TIMEOUT_MS,
+                    180,
+                    "task_claimdailypointresp",
+                    "syncresp"
+                );
             }
-            sendDaily(token, executed, "task_claimdailyreward", mapOf(), 250);
-            sendDaily(token, executed, "task_claimweekreward", mapOf(), 250);
+            sendDailyAndWaitOptional(
+                token,
+                executed,
+                "task_claimdailyreward",
+                mapOf(),
+                DAILY_WAIT_TIMEOUT_MS,
+                250,
+                "task_claimdailyrewardresp",
+                "syncrewardresp",
+                "syncresp"
+            );
+            sendDailyAndWaitOptional(
+                token,
+                executed,
+                "task_claimweekreward",
+                mapOf(),
+                DAILY_WAIT_TIMEOUT_MS,
+                250,
+                "task_claimweekrewardresp",
+                "syncrewardresp",
+                "syncresp"
+            );
 
             // 刷新角色信息，仅用于每日任务进度同步
             wsManager.requestRoleInfo(token);
@@ -562,10 +719,32 @@ public class XyzwWsController {
             if (dailyPoint != null) {
                 data.put("dailyPoint", dailyPoint);
             }
+            if (manualTask) {
+                taskLogService.recordTaskResult(
+                    token,
+                    XyzwTaskLogService.TYPE_MANUAL_TASK,
+                    "手工任务",
+                    extractTaskTokenName(effectiveTaskName),
+                    true,
+                    "执行成功"
+                );
+            }
             return ResponseEntity.ok(build(true, "success", data));
         } catch (Exception ex) {
             logger.warn("执行每日任务失败 token={} msg={}", token, ex.getMessage(), ex);
+            if (manualTask) {
+                taskLogService.recordTaskResult(
+                    token,
+                    XyzwTaskLogService.TYPE_MANUAL_TASK,
+                    "手工任务",
+                    extractTaskTokenName(effectiveTaskName),
+                    false,
+                    ex.getMessage()
+                );
+            }
             return ResponseEntity.badRequest().body(build(false, "执行每日任务失败: " + ex.getMessage(), null));
+        } finally {
+            wsManager.clearTaskLabel(token);
         }
     }
 
@@ -741,16 +920,143 @@ public class XyzwWsController {
     }
 
     private void sendDaily(String token, List<String> executed, String cmd, Map<String, Object> body, long delayMs) {
+        ensureConnectedForDaily(token, cmd);
         wsManager.sendCommand(token, cmd, body);
         executed.add(cmd);
-        if (delayMs > 0) {
-            try {
-                Thread.sleep(delayMs);
-            } catch (InterruptedException ex) {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException("任务执行被中断");
+        sleepDailyStep(delayMs);
+    }
+
+    private void sendDailyAndWait(
+        String token,
+        List<String> executed,
+        String cmd,
+        Map<String, Object> body,
+        long timeoutMs,
+        long delayMs,
+        String... respCmds
+    ) {
+        ensureConnectedForDaily(token, cmd);
+
+        Map<String, Long> beforeVersions = new LinkedHashMap<String, Long>();
+        if (respCmds != null) {
+            for (String respCmd : respCmds) {
+                if (!isBlank(respCmd)) {
+                    beforeVersions.put(respCmd, wsManager.getCommandVersion(token, respCmd));
+                }
             }
         }
+
+        wsManager.sendCommand(token, cmd, body);
+        executed.add(cmd);
+
+        if (!beforeVersions.isEmpty()) {
+            long wait = timeoutMs <= 0 ? DAILY_WAIT_TIMEOUT_MS : timeoutMs;
+            long start = System.currentTimeMillis();
+            boolean arrived = false;
+            String disconnectedMsg = null;
+            while (System.currentTimeMillis() - start < wait) {
+                if (!wsManager.isConnected(token)) {
+                    if (wsManager.isReconnectPaused(token)) {
+                        disconnectedMsg =
+                            "WebSocket 已断开且自动重连暂停 cmd=" + cmd + " reason=" + wsManager.getReconnectPauseReason(token);
+                    } else {
+                        disconnectedMsg = "WebSocket 已断开 cmd=" + cmd;
+                    }
+                    break;
+                }
+                for (Map.Entry<String, Long> entry : beforeVersions.entrySet()) {
+                    long current = wsManager.getCommandVersion(token, entry.getKey());
+                    if (current > entry.getValue()) {
+                        arrived = true;
+                        break;
+                    }
+                }
+                if (arrived) {
+                    break;
+                }
+                sleepDaily(50);
+            }
+            if (!arrived) {
+                if (disconnectedMsg != null) {
+                    throw new IllegalStateException(disconnectedMsg);
+                }
+                throw new IllegalStateException(
+                    "日常任务回包超时 cmd=" + cmd + " resp=" + joinRespNames(beforeVersions.keySet())
+                );
+            }
+        }
+
+        sleepDailyStep(delayMs);
+    }
+
+    private void sendDailyAndWaitOptional(
+        String token,
+        List<String> executed,
+        String cmd,
+        Map<String, Object> body,
+        long timeoutMs,
+        long delayMs,
+        String... respCmds
+    ) {
+        try {
+            sendDailyAndWait(token, executed, cmd, body, timeoutMs, delayMs, respCmds);
+        } catch (IllegalStateException ex) {
+            String message = ex.getMessage() == null ? "" : ex.getMessage();
+            if (message.startsWith("日常任务回包超时")) {
+                logger.info("每日任务可忽略步骤超时，继续执行 cmd={} token={} msg={}", cmd, token, message);
+                return;
+            }
+            throw ex;
+        }
+    }
+
+    private void ensureConnectedForDaily(String token, String cmd) {
+        if (wsManager.isConnected(token)) {
+            return;
+        }
+        if (wsManager.isReconnectPaused(token)) {
+            throw new IllegalStateException(
+                "WebSocket 已断开且自动重连暂停 cmd=" + cmd + " reason=" + wsManager.getReconnectPauseReason(token)
+            );
+        }
+        throw new IllegalStateException("WebSocket 已断开 cmd=" + cmd);
+    }
+
+    private String joinRespNames(Iterable<String> names) {
+        if (names == null) {
+            return "<none>";
+        }
+        StringBuilder builder = new StringBuilder();
+        for (String name : names) {
+            if (name == null || name.trim().isEmpty()) {
+                continue;
+            }
+            if (builder.length() > 0) {
+                builder.append('/');
+            }
+            builder.append(name);
+        }
+        return builder.length() == 0 ? "<none>" : builder.toString();
+    }
+
+    private void sleepDaily(long delayMs) {
+        if (delayMs <= 0) {
+            return;
+        }
+        try {
+            Thread.sleep(delayMs);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("任务执行被中断");
+        }
+    }
+
+    private void sleepDailyStep(long delayMs) {
+        long actual = delayMs;
+        if (actual < DAILY_STEP_MIN_DELAY_MS) {
+            actual = DAILY_STEP_MIN_DELAY_MS;
+        }
+        sleepDaily(actual);
     }
 
     private Integer extractDailyPoint(Map<String, Object> roleInfo) {
@@ -777,6 +1083,27 @@ public class XyzwWsController {
             }
         }
         return null;
+    }
+
+    private String normalizeText(String value) {
+        if (value == null) {
+            return null;
+        }
+        String text = value.trim();
+        return text.isEmpty() ? null : text;
+    }
+
+    private String extractTaskTokenName(String taskName) {
+        String text = normalizeText(taskName);
+        if (text == null) {
+            return "当前账号";
+        }
+        int slash = text.indexOf('/');
+        if (slash < 0 || slash >= text.length() - 1) {
+            return "当前账号";
+        }
+        String tokenName = text.substring(slash + 1).trim();
+        return tokenName.isEmpty() ? "当前账号" : tokenName;
     }
 
     private Long pickArenaTargetId(Object arenaResp) {

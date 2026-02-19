@@ -29,7 +29,11 @@
           <button class="ghost" type="button" @click="router.push('/wx-login')">
             微信扫码登录
           </button>
-          <button class="ghost" type="button" @click="router.push('/batch-daily')">
+          <button
+            class="ghost"
+            type="button"
+            @click="router.push('/batch-daily')"
+          >
             批量日常
           </button>
           <button class="ghost" type="button" @click="fetchBins">刷新</button>
@@ -148,7 +152,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from "vue";
+import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 
 const router = useRouter();

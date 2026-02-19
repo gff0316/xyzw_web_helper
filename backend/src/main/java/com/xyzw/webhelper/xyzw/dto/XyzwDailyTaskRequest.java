@@ -2,6 +2,7 @@ package com.xyzw.webhelper.xyzw.dto;
 
 public class XyzwDailyTaskRequest {
     private String token;
+    private String taskName;
     private DailySettings settings;
 
     public String getToken() {
@@ -10,6 +11,14 @@ public class XyzwDailyTaskRequest {
 
     public void setToken(String token) {
         this.token = token;
+    }
+
+    public String getTaskName() {
+        return taskName;
+    }
+
+    public void setTaskName(String taskName) {
+        this.taskName = taskName;
     }
 
     public DailySettings getSettings() {

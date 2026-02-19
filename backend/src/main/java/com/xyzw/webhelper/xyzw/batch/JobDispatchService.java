@@ -11,6 +11,7 @@ import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -116,7 +117,11 @@ public class JobDispatchService {
         try {
             String message = runJob(jobKey, triggerType, triggerSource);
             long duration = System.currentTimeMillis() - start;
-            auditService.finish(logId, "SUCCESS", message, null, duration);
+            String status = "SUCCESS";
+            if (message != null && message.trim().toLowerCase(Locale.ROOT).startsWith("skipped:")) {
+                status = "SKIPPED";
+            }
+            auditService.finish(logId, status, message, null, duration);
             return message;
         } catch (Exception ex) {
             long duration = System.currentTimeMillis() - start;

@@ -2,6 +2,7 @@ package com.xyzw.webhelper.xyzw.ws;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.xyzw.webhelper.xyzw.XyzwTaskLogService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -36,10 +37,16 @@ public class XyzwWsManager {
     private final Map<String, Long> towerInfoVersions = new ConcurrentHashMap<String, Long>();
     private final Map<String, Object> commandBodies = new ConcurrentHashMap<String, Object>();
     private final Map<String, Long> commandVersions = new ConcurrentHashMap<String, Long>();
+    private final Map<String, String> taskLabels = new ConcurrentHashMap<String, String>();
     private final Map<String, String> reconnectPauseReasons = new ConcurrentHashMap<String, String>();
     private final Map<String, Long> reconnectPausedAtMs = new ConcurrentHashMap<String, Long>();
     private final Map<Long, String> roleBindings = new ConcurrentHashMap<Long, String>();
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
+    private final XyzwTaskLogService taskLogService;
+
+    public XyzwWsManager(XyzwTaskLogService taskLogService) {
+        this.taskLogService = taskLogService;
+    }
 
     public synchronized void connect(String key, String wsUrl) {
         if (isReconnectPaused(key)) {
@@ -60,6 +67,33 @@ public class XyzwWsManager {
 
     public String getReconnectPauseReason(String key) {
         return reconnectPauseReasons.get(key);
+    }
+
+    public void bindTaskLabel(String key, String taskLabel) {
+        if (key == null || key.trim().isEmpty()) {
+            return;
+        }
+        String normalized = normalizeTaskLabel(taskLabel);
+        if (normalized == null) {
+            taskLabels.remove(key);
+        } else {
+            taskLabels.put(key, normalized);
+        }
+        XyzwWsClient client = clients.get(key);
+        if (client != null) {
+            client.setTaskLabel(normalized);
+        }
+    }
+
+    public void clearTaskLabel(String key) {
+        if (key == null || key.trim().isEmpty()) {
+            return;
+        }
+        taskLabels.remove(key);
+        XyzwWsClient client = clients.get(key);
+        if (client != null) {
+            client.setTaskLabel(null);
+        }
     }
 
     public String normalizeToken(String rawToken) {
@@ -110,6 +144,7 @@ public class XyzwWsManager {
                 if (oldClient != null) {
                     closeClientQuietly(oldClient, "replace by same role");
                 }
+                taskLabels.remove(oldKey);
                 clearCachedState(oldKey);
                 clearReconnectPause(oldKey);
                 roleBindings.remove(roleId, oldKey);
@@ -125,6 +160,7 @@ public class XyzwWsManager {
         XyzwWsClient existing = clients.get(key);
         if (existing != null) {
             if (existing.isOpen()) {
+                existing.setTaskLabel(taskLabels.get(key));
                 if (roleId != null) {
                     roleBindings.put(roleId, key);
                 }
@@ -132,6 +168,7 @@ public class XyzwWsManager {
                 return;
             }
             if (existing.isConnecting() && existing.getConnectingAgeMs() <= CONNECTING_STALE_MS) {
+                existing.setTaskLabel(taskLabels.get(key));
                 if (roleId != null) {
                     roleBindings.put(roleId, key);
                 }
@@ -145,7 +182,15 @@ public class XyzwWsManager {
 
         clearCachedState(key);
         try {
-            XyzwWsClient client = new XyzwWsClient(new URI(wsUrl), scheduler, key, this::handlePacket, this::handleClosed);
+            XyzwWsClient client = new XyzwWsClient(
+                new URI(wsUrl),
+                scheduler,
+                key,
+                this::handlePacket,
+                this::handleClosed,
+                this::handleCommandSend
+            );
+            client.setTaskLabel(taskLabels.get(key));
             clients.put(key, client);
             if (roleId != null) {
                 roleBindings.put(roleId, key);
@@ -163,6 +208,7 @@ public class XyzwWsManager {
         if (existing != null) {
             closeClientQuietly(existing, "disconnect");
         }
+        taskLabels.remove(key);
         removeRoleBindingForKey(key);
         clearCachedState(key);
         logger.info("WebSocket 已断开 token={}", key);
@@ -490,6 +536,11 @@ public class XyzwWsManager {
         if (shouldClearRoleBinding) {
             removeRoleBindingForKey(key);
         }
+        if (remote && !closedByClient && reason != null && "token expired".equalsIgnoreCase(reason.trim())) {
+            markReconnectPaused(key, "token-expired");
+            logger.warn("检测到 token 已过期，已暂停自动重连 token={} lastCmd={}", key, lastCmd);
+            return;
+        }
         if (remote && !closedByClient && reason != null && "other login".equalsIgnoreCase(reason.trim())) {
             markReconnectPaused(key, "other-login");
             logger.warn("检测到账号在其他地方登录，已暂停自动重连 token={} lastCmd={}", key, lastCmd);
@@ -511,10 +562,20 @@ public class XyzwWsManager {
         reconnectPausedAtMs.remove(key);
     }
 
-    private void handlePacket(String key, String cmd, Object body) {
+    private void handleCommandSend(String key, String taskLabel, String cmd, String cmdName, String bodySummary) {
+        if (taskLogService == null) {
+            return;
+        }
+        taskLogService.recordCommandSend(key, taskLabel, cmd, cmdName, bodySummary);
+    }
+
+    private void handlePacket(String key, String cmd, Object body, Object error) {
         if (cmd == null || cmd.isEmpty()) {
             return;
         }
+        String cmdName = XyzwCommandNameRegistry.getName(cmd);
+        String task = normalizeTaskLabel(taskLabels.get(key));
+        boolean responseOk = !hasPacketError(error);
 
         recordCommandBody(key, cmd, body);
 
@@ -525,7 +586,15 @@ public class XyzwWsManager {
                 roleInfos.put(key, roleInfo);
                 roleInfoVersions.put(key, System.currentTimeMillis());
             }
-            logger.info("收到身份牌数据 token={}", key);
+            if (task == null) {
+                logger.info("收到身份牌数据 cmd={} cmdName={} token={}", cmd, cmdName, key);
+            } else {
+                logger.info("收到身份牌数据 cmd={} cmdName={} task={} token={}", cmd, cmdName, task, key);
+                if (cmd.endsWith("resp")) {
+                    String responseMessage = responseOk ? "收到回包" : "回包错误：" + String.valueOf(error);
+                    taskLogService.recordCommandResponse(key, task, cmd, cmdName, responseOk, responseMessage);
+                }
+            }
             return;
         }
 
@@ -545,7 +614,15 @@ public class XyzwWsManager {
                 teamInfos.put(key, merged);
                 teamInfoVersions.put(key, System.currentTimeMillis());
             }
-            logger.info("收到阵容数据 token={}", key);
+            if (task == null) {
+                logger.info("收到阵容数据 cmd={} cmdName={} token={}", cmd, cmdName, key);
+            } else {
+                logger.info("收到阵容数据 cmd={} cmdName={} task={} token={}", cmd, cmdName, task, key);
+                if (cmd.endsWith("resp")) {
+                    String responseMessage = responseOk ? "收到回包" : "回包错误：" + String.valueOf(error);
+                    taskLogService.recordCommandResponse(key, task, cmd, cmdName, responseOk, responseMessage);
+                }
+            }
             return;
         }
 
@@ -556,16 +633,95 @@ public class XyzwWsManager {
                 towerInfos.put(key, towerInfo);
                 towerInfoVersions.put(key, System.currentTimeMillis());
             }
-            logger.info("收到咸将塔数据 token={}", key);
+            if (task == null) {
+                logger.info("收到咸将塔数据 cmd={} cmdName={} token={}", cmd, cmdName, key);
+            } else {
+                logger.info("收到咸将塔数据 cmd={} cmdName={} task={} token={}", cmd, cmdName, task, key);
+                if (cmd.endsWith("resp")) {
+                    String responseMessage = responseOk ? "收到回包" : "回包错误：" + String.valueOf(error);
+                    taskLogService.recordCommandResponse(key, task, cmd, cmdName, responseOk, responseMessage);
+                }
+            }
             return;
         }
 
         if ("bottlehelper_stopresp".equals(cmd) || "bottlehelper_startresp".equals(cmd) || "syncresp".equals(cmd)) {
-            logger.info("收到命令回包 cmd={} token={}", cmd, key);
+            String relatedCmd = null;
+            String relatedCmdName = null;
+            if ("syncresp".equals(cmd)) {
+                XyzwWsClient client = clients.get(key);
+                if (client != null) {
+                    String last = client.getLastCmd();
+                    if (last != null) {
+                        String normalized = last.trim().toLowerCase();
+                        if (!normalized.isEmpty() && !"_sys/ack".equals(normalized)) {
+                            relatedCmd = normalized;
+                            relatedCmdName = XyzwCommandNameRegistry.getName(normalized);
+                        }
+                    }
+                }
+            }
+            if (task != null) {
+                String responseMessage = responseOk ? "收到回包" : "回包错误：" + String.valueOf(error);
+                if (relatedCmd != null) {
+                    responseMessage = responseMessage + "（关联指令：" + relatedCmdName + "）";
+                }
+                taskLogService.recordCommandResponse(key, task, cmd, cmdName, responseOk, responseMessage);
+            }
+            if (task == null) {
+                if (relatedCmd == null) {
+                    logger.info("收到命令回包 cmd={} cmdName={} token={}", cmd, cmdName, key);
+                } else {
+                    logger.info(
+                        "收到命令回包 cmd={} cmdName={} relatedCmd={} relatedCmdName={} token={}",
+                        cmd,
+                        cmdName,
+                        relatedCmd,
+                        relatedCmdName,
+                        key
+                    );
+                }
+            } else {
+                if (relatedCmd == null) {
+                    logger.info("收到命令回包 cmd={} cmdName={} task={} token={}", cmd, cmdName, task, key);
+                } else {
+                    logger.info(
+                        "收到命令回包 cmd={} cmdName={} relatedCmd={} relatedCmdName={} task={} token={}",
+                        cmd,
+                        cmdName,
+                        relatedCmd,
+                        relatedCmdName,
+                        task,
+                        key
+                    );
+                }
+            }
             return;
         }
 
+        if (task != null && cmd.endsWith("resp")) {
+            String responseMessage = responseOk ? "收到回包" : "回包错误：" + String.valueOf(error);
+            taskLogService.recordCommandResponse(key, task, cmd, cmdName, responseOk, responseMessage);
+        }
+
         logger.debug("收到 WebSocket 消息 cmd={} token={}", cmd, key);
+    }
+
+    private boolean hasPacketError(Object error) {
+        if (error == null) {
+            return false;
+        }
+        if (error instanceof Number) {
+            return ((Number) error).intValue() != 0;
+        }
+        if (error instanceof String) {
+            String text = ((String) error).trim();
+            if (text.isEmpty()) {
+                return false;
+            }
+            return !"0".equals(text);
+        }
+        return true;
     }
 
     private void recordCommandBody(String key, String cmd, Object body) {
@@ -721,6 +877,14 @@ public class XyzwWsManager {
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    private String normalizeTaskLabel(String label) {
+        if (label == null) {
+            return null;
+        }
+        String text = label.trim();
+        return text.isEmpty() ? null : text;
     }
 
     private static final class HangUpMetrics {

@@ -23,9 +23,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/api/v1/xyzw")
@@ -34,15 +38,21 @@ public class XyzwProfileController {
     private final AuthService authService;
     private final XyzwProfileService profileService;
     private final XyzwUserBinMapper binMapper;
+    private final XyzwUserTokenMapper tokenMapper;
+    private final XyzwTaskLogService taskLogService;
 
     public XyzwProfileController(
         AuthService authService,
         XyzwProfileService profileService,
-        XyzwUserBinMapper binMapper
+        XyzwUserBinMapper binMapper,
+        XyzwUserTokenMapper tokenMapper,
+        XyzwTaskLogService taskLogService
     ) {
         this.authService = authService;
         this.profileService = profileService;
         this.binMapper = binMapper;
+        this.tokenMapper = tokenMapper;
+        this.taskLogService = taskLogService;
     }
 
     @PostMapping(value = "/bins", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -166,6 +176,104 @@ public class XyzwProfileController {
         return ResponseEntity.ok(build(true, "success", data));
     }
 
+    @GetMapping("/task-logs")
+    public ResponseEntity<Map<String, Object>> listTaskLogs(
+        @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authHeader,
+        @RequestParam(value = "tokenId", required = false) Long tokenId,
+        @RequestParam(value = "type", required = false) Integer type,
+        @RequestParam(value = "limit", required = false) Integer limit
+    ) {
+        AuthResponse user = resolveUser(authHeader);
+        if (user == null) {
+            LOGGER.warn("listTaskLogs unauthorized");
+            return ResponseEntity.status(401).body(build(false, "unauthorized", null));
+        }
+        if (type != null
+            && type != XyzwTaskLogService.TYPE_SCHEDULED_TASK
+            && type != XyzwTaskLogService.TYPE_MANUAL_TASK
+            && type != XyzwTaskLogService.TYPE_COMMAND) {
+            return ResponseEntity.badRequest().body(build(false, "type 仅支持 0、1、2", null));
+        }
+
+        List<XyzwUserToken> userTokens = tokenMapper.findByUserId(user.getId());
+        if (userTokens == null) {
+            userTokens = new ArrayList<XyzwUserToken>();
+        }
+        Map<Long, TokenMeta> idToMeta = new HashMap<Long, TokenMeta>();
+        Map<String, TokenMeta> keyToMeta = new HashMap<String, TokenMeta>();
+        Set<String> allowedKeys = new LinkedHashSet<String>();
+        List<Map<String, Object>> tokenOptions = new ArrayList<Map<String, Object>>();
+
+        for (XyzwUserToken token : userTokens) {
+            if (token == null || token.getId() == null) {
+                continue;
+            }
+            String tokenKey = taskLogService.buildTokenKey(token.getToken());
+            if (tokenKey == null || tokenKey.trim().isEmpty()) {
+                continue;
+            }
+            TokenMeta meta = new TokenMeta();
+            meta.tokenId = token.getId();
+            meta.tokenName = normalizeTokenName(token);
+            meta.tokenKey = tokenKey;
+            meta.roleId = taskLogService.extractRoleId(token.getToken());
+
+            idToMeta.put(meta.tokenId, meta);
+            keyToMeta.put(meta.tokenKey, meta);
+            allowedKeys.add(meta.tokenKey);
+
+            Map<String, Object> option = new LinkedHashMap<String, Object>();
+            option.put("tokenId", meta.tokenId);
+            option.put("tokenName", meta.tokenName);
+            option.put("roleId", meta.roleId);
+            tokenOptions.add(option);
+        }
+
+        Set<String> filterKeys = allowedKeys;
+        if (tokenId != null) {
+            TokenMeta selected = idToMeta.get(tokenId);
+            if (selected == null) {
+                return ResponseEntity.badRequest().body(build(false, "token 不存在或无权限", null));
+            }
+            filterKeys = new LinkedHashSet<String>();
+            filterKeys.add(selected.tokenKey);
+        }
+
+        List<XyzwTaskLogEntry> logs = taskLogService.listRecent(filterKeys, type, normalizeLimit(limit));
+        List<Map<String, Object>> logItems = new ArrayList<Map<String, Object>>();
+        for (XyzwTaskLogEntry entry : logs) {
+            if (entry == null) {
+                continue;
+            }
+            TokenMeta meta = keyToMeta.get(entry.getTokenKey());
+            Map<String, Object> item = new LinkedHashMap<String, Object>();
+            item.put("id", entry.getId());
+            item.put("type", entry.getType());
+            item.put("level", entry.getLevel());
+            item.put("phase", entry.getPhase());
+            item.put("taskType", entry.getTaskType());
+            item.put("taskTokenName", entry.getTaskTokenName());
+            item.put("cmd", entry.getCmd());
+            item.put("cmdName", entry.getCmdName());
+            item.put("message", entry.getMessage());
+            item.put("createdAt", entry.getCreatedAt() == null ? null : entry.getCreatedAt().toString());
+            item.put("roleId", entry.getRoleId());
+            item.put("tokenKey", entry.getTokenKey());
+            if (meta != null) {
+                item.put("tokenId", meta.tokenId);
+                item.put("tokenName", meta.tokenName);
+            } else {
+                item.put("tokenName", entry.getTaskTokenName());
+            }
+            logItems.add(item);
+        }
+
+        Map<String, Object> data = new HashMap<String, Object>();
+        data.put("logs", logItems);
+        data.put("tokens", tokenOptions);
+        return ResponseEntity.ok(build(true, "success", data));
+    }
+
     @DeleteMapping("/bins/{binId}")
     public ResponseEntity<Map<String, Object>> deleteBin(
         @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authHeader,
@@ -241,5 +349,32 @@ public class XyzwProfileController {
             payload.put("data", data);
         }
         return payload;
+    }
+
+    private int normalizeLimit(Integer limit) {
+        if (limit == null || limit.intValue() <= 0) {
+            return 120;
+        }
+        return Math.min(limit.intValue(), 300);
+    }
+
+    private String normalizeTokenName(XyzwUserToken token) {
+        if (token == null) {
+            return "未命名账号";
+        }
+        if (token.getName() != null && !token.getName().trim().isEmpty()) {
+            return token.getName().trim();
+        }
+        if (token.getUuid() != null && !token.getUuid().trim().isEmpty()) {
+            return token.getUuid().trim();
+        }
+        return "Token-" + token.getId();
+    }
+
+    private static final class TokenMeta {
+        private Long tokenId;
+        private String tokenName;
+        private String tokenKey;
+        private Long roleId;
     }
 }

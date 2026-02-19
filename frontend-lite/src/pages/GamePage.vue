@@ -412,6 +412,49 @@
         </div>
       </div>
 
+      <div v-else-if="activeSection === 'logs'" class="task-log-panel in-section">
+        <div class="task-log-head">
+          <div>
+            <div class="task-log-title">定时任务执行日志</div>
+            <div class="task-log-desc">
+              type=0 定时任务，type=1 手工任务，type=2 具体命令指令
+            </div>
+          </div>
+          <div class="task-log-tools">
+            <select v-model="taskLogType">
+              <option value="">全部类型</option>
+              <option value="0">type=0 定时任务</option>
+              <option value="1">type=1 手工任务</option>
+              <option value="2">type=2 命令指令</option>
+            </select>
+            <button class="ghost" type="button" @click="fetchTaskLogs">
+              刷新日志
+            </button>
+          </div>
+        </div>
+        <div class="task-log-body">
+          <div v-if="taskLogsLoading" class="task-log-empty">日志加载中...</div>
+          <div v-else-if="taskLogs.length === 0" class="task-log-empty">
+            暂无日志
+          </div>
+          <div v-else class="task-log-list">
+            <div
+              v-for="item in taskLogs"
+              :key="item.id"
+              class="task-log-item"
+              :class="[taskLogLevelClass(item.level), Number(item.type) === 2 ? 'type-cmd' : 'type-task']"
+            >
+              <div class="task-log-meta">
+                <span>{{ formatDateTime(item.createdAt) }}</span>
+                <span>{{ formatTaskLogTypeTag(item.type) }}</span>
+                <span>{{ item.tokenName || item.taskTokenName || "当前账号" }}</span>
+              </div>
+              <div class="task-log-text">{{ formatTaskLogLine(item) }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div v-else class="section-placeholder">
         <div class="placeholder-title">{{ activeSectionLabel }}</div>
         <div class="placeholder-desc">功能正在迁移中，敬请期待。</div>
@@ -575,6 +618,7 @@ const sections = [
   { key: "boss", label: "军团boss" },
   { key: "race", label: "俱乐部赛车" },
   { key: "fishing", label: "钓鱼" },
+  { key: "logs", label: "日志" },
 ];
 const activeSection = ref("daily");
 const clubInfo = ref(null);
@@ -582,6 +626,9 @@ const clubLoading = ref(false);
 const clubSignLoading = ref(false);
 const clubCars = ref([]);
 const clubCarsLoading = ref(false);
+const taskLogs = ref([]);
+const taskLogsLoading = ref(false);
+const taskLogType = ref("");
 
 const statusText = computed(() => {
   switch (status.value) {
@@ -905,6 +952,7 @@ const fetchTokenRecord = async () => {
     }
     loadDailySettings();
     setNote("Token 已加载，可开始操作。", false);
+    await fetchTaskLogs();
     await loadRoleInfo(true);
     await loadTowerInfo(true);
     await refreshStatus();
@@ -1119,6 +1167,7 @@ const handleRunDailyTasks = async () => {
 
     const executedCount = Number(payload?.data?.executedCount || 0);
     setNote(`每日任务已执行，已发送 ${executedCount} 个指令。`, false);
+    await fetchTaskLogs();
   } catch (error) {
     setNote(`执行每日任务失败: ${error.message}`, true);
   } finally {
@@ -1608,7 +1657,91 @@ const formatTime = (seconds) => {
   return `${h}:${m}:${s}`;
 };
 
+const formatDateTime = (value) => {
+  if (!value) return "--";
+  return String(value).replace("T", " ").replace(".000", "");
+};
+
+const taskLogLevelClass = (level) => {
+  const upper = String(level || "").toUpperCase();
+  if (upper === "SUCCESS") return "success";
+  if (upper === "WARNING") return "warning";
+  if (upper === "ERROR") return "error";
+  return "info";
+};
+
+const formatTaskLogLine = (item) => {
+  if (!item || typeof item !== "object") return "";
+  const type = Number(item.type);
+  if (type === 0) {
+    const taskType = item.taskType || "批量日常任务";
+    const result =
+      String(item.level || "").toUpperCase() === "SUCCESS"
+        ? "执行成功"
+        : "执行失败";
+    return `[定时] ${taskType} ${result}：${item.message || "无详情"}`;
+  }
+  if (type === 1) {
+    const taskType = item.taskType || "手工任务";
+    const result =
+      String(item.level || "").toUpperCase() === "SUCCESS"
+        ? "执行成功"
+        : "执行失败";
+    return `[手工] ${taskType} ${result}：${item.message || "无详情"}`;
+  }
+  const phaseMap = {
+    SEND: "发送",
+    RESP: "回包",
+  };
+  const phaseText = phaseMap[String(item.phase || "").toUpperCase()] || "指令";
+  const cmdName = item.cmdName || item.cmd || "未知命令";
+  const cmdCode = item.cmd ? `(${item.cmd})` : "";
+  return `[命令] ${phaseText} ${cmdName}${cmdCode}：${item.message || "无详情"}`;
+};
+
+const formatTaskLogTypeTag = (type) => {
+  const t = Number(type);
+  if (t === 0) return "type=0 定时";
+  if (t === 1) return "type=1 手工";
+  if (t === 2) return "type=2 命令";
+  return `type=${type}`;
+};
+
+const fetchTaskLogs = async () => {
+  if (!(await ensureAuth())) return;
+  if (!tokenRecord.value?.id) {
+    taskLogs.value = [];
+    return;
+  }
+  taskLogsLoading.value = true;
+  try {
+    const params = new URLSearchParams();
+    params.set("limit", "200");
+    params.set("tokenId", String(tokenRecord.value.id));
+    if (taskLogType.value !== "") {
+      params.set("type", taskLogType.value);
+    }
+    const response = await fetch(`/api/v1/xyzw/task-logs?${params.toString()}`, {
+      headers: { ...authHeaders() },
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.success) {
+      throw new Error(payload.message || "获取日志失败");
+    }
+    taskLogs.value = payload?.data?.logs || [];
+  } catch (error) {
+    setNote(`获取日志失败: ${error.message}`, true);
+  } finally {
+    taskLogsLoading.value = false;
+  }
+};
+
 const statusTimer = setInterval(refreshStatus, 5000);
+const taskLogTimer = setInterval(() => {
+  if (tokenRecord.value?.id) {
+    fetchTaskLogs();
+  }
+}, 15000);
 
 onMounted(() => {
   if (route.params.tokenId) {
@@ -1629,7 +1762,17 @@ watch(
   { deep: true }
 );
 
+watch(taskLogType, () => {
+  if (tokenRecord.value?.id) {
+    fetchTaskLogs();
+  }
+});
+
 watch(activeSection, (value) => {
+  if (value === "logs") {
+    fetchTaskLogs();
+    return;
+  }
   if (value === "club") {
     if (!clubInfo.value) {
       loadClubInfo(true);
@@ -1649,6 +1792,9 @@ watch(
   () => {
     clubInfo.value = null;
     clubCars.value = [];
+    if (!tokenRecord.value?.id) {
+      taskLogs.value = [];
+    }
   },
   { deep: false }
 );
@@ -1657,6 +1803,7 @@ onBeforeUnmount(() => {
   clearInterval(statusTimer);
   clearInterval(helperTimer);
   clearInterval(hangupTimer);
+  clearInterval(taskLogTimer);
 });
 
 const helperTimer = setInterval(() => {
@@ -1744,6 +1891,120 @@ const hangupTimer = setInterval(() => {
 .header-actions {
   display: flex;
   gap: 8px;
+}
+
+.task-log-panel {
+  margin: 0 auto 10px;
+  width: 100%;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(148, 163, 184, 0.42);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+  padding: 12px 14px;
+}
+
+.task-log-panel.in-section {
+  margin: 8px 0 0;
+}
+
+.task-log-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.task-log-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.task-log-desc {
+  margin-top: 2px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.task-log-tools {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.task-log-tools select {
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.6);
+  background: rgba(255, 255, 255, 0.88);
+  color: #0f172a;
+  padding: 0 10px;
+}
+
+.task-log-body {
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.task-log-empty {
+  font-size: 13px;
+  color: #64748b;
+  padding: 8px 2px;
+}
+
+.task-log-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.task-log-item {
+  border-radius: 10px;
+  border: 1px solid rgba(203, 213, 225, 0.8);
+  background: rgba(248, 250, 252, 0.85);
+  padding: 8px 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.task-log-item.type-task {
+  border-left: 4px solid rgba(14, 116, 144, 0.45);
+}
+
+.task-log-item.type-cmd {
+  border-left: 4px solid rgba(59, 130, 246, 0.45);
+}
+
+.task-log-item.success {
+  background: rgba(220, 252, 231, 0.62);
+  border-color: rgba(34, 197, 94, 0.35);
+}
+
+.task-log-item.warning {
+  background: rgba(254, 243, 199, 0.62);
+  border-color: rgba(245, 158, 11, 0.4);
+}
+
+.task-log-item.error {
+  background: rgba(254, 226, 226, 0.64);
+  border-color: rgba(248, 113, 113, 0.42);
+}
+
+.task-log-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.task-log-text {
+  font-size: 13px;
+  color: #0f172a;
+  line-height: 1.45;
 }
 
 .ghost {
@@ -2348,6 +2609,11 @@ const hangupTimer = setInterval(() => {
 
 @media (max-width: 720px) {
   .header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .task-log-head {
     flex-direction: column;
     align-items: flex-start;
   }

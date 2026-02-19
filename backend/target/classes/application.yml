@@ -39,4 +39,4 @@ jobs:
   token-maintenance:
     enabled: true
     cron: "0 0 */5 * * *"
-    enable-bottle-restart: false
+    enable-bottle-restart: true

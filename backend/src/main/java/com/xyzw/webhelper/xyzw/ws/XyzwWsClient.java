@@ -30,6 +30,7 @@ final class XyzwWsClient extends WebSocketClient {
     private final String key;
     private final PacketListener packetListener;
     private final CloseListener closeListener;
+    private final CommandSendListener commandSendListener;
 
     private volatile ScheduledFuture<?> heartbeatTask;
     private volatile long connectStartMs = System.currentTimeMillis();
@@ -39,9 +40,11 @@ final class XyzwWsClient extends WebSocketClient {
     private volatile boolean closedByClient = false;
     private volatile String closeReasonByClient = NO_REASON;
     private volatile boolean kickedByOtherLogin = false;
+    private volatile String fatalReason = NO_REASON;
+    private volatile String taskLabel = null;
 
     interface PacketListener {
-        void onPacket(String key, String cmd, Object body);
+        void onPacket(String key, String cmd, Object body, Object error);
     }
 
     interface CloseListener {
@@ -56,24 +59,31 @@ final class XyzwWsClient extends WebSocketClient {
         );
     }
 
+    interface CommandSendListener {
+        void onSend(String key, String taskLabel, String cmd, String cmdName, String bodySummary);
+    }
+
     XyzwWsClient(
         URI serverUri,
         ScheduledExecutorService scheduler,
         String key,
         PacketListener packetListener,
-        CloseListener closeListener
+        CloseListener closeListener,
+        CommandSendListener commandSendListener
     ) {
         super(serverUri);
         this.scheduler = scheduler;
         this.key = key;
         this.packetListener = packetListener;
         this.closeListener = closeListener;
+        this.commandSendListener = commandSendListener;
     }
 
     @Override
     public void onOpen(ServerHandshake handshakeData) {
         openedAtMs = System.currentTimeMillis();
         kickedByOtherLogin = false;
+        fatalReason = NO_REASON;
         logger.info("WebSocket 已连接 uri={} token={}", getURI(), key);
         startHeartbeat();
     }
@@ -106,22 +116,61 @@ final class XyzwWsClient extends WebSocketClient {
             if (packetListener != null) {
                 Object error = packet.get("error");
                 String cmd = normalizeCmd(packet.get("cmd"));
+                String task = normalizeTaskLabel(taskLabel);
                 if ((cmd == null || cmd.isEmpty()) && hasPacketError(error)) {
                     String inferred = inferResponseCmdFromLastCmd();
                     if (inferred != null) {
                         cmd = inferred;
-                        logger.info("WebSocket 错误包缺少 cmd，按最近指令推断 cmd={} token={}", cmd, key);
+                        String cmdName = XyzwCommandNameRegistry.getName(cmd);
+                        if (task == null) {
+                            logger.info("WebSocket 错误包缺少 cmd，按最近指令推断 cmd={} cmdName={} token={}", cmd, cmdName, key);
+                        } else {
+                            logger.info(
+                                "WebSocket 错误包缺少 cmd，按最近指令推断 cmd={} cmdName={} task={} token={}",
+                                cmd,
+                                cmdName,
+                                task,
+                                key
+                            );
+                        }
                     }
                 }
                 if (isOtherLoginFatal(cmd, error)) {
                     kickedByOtherLogin = true;
                     logger.warn("WebSocket 收到顶号通知，连接即将被服务端关闭 token={}", key);
                 }
+                if (isTokenExpiredFatal(cmd, error)) {
+                    fatalReason = "token expired";
+                    logger.warn("WebSocket 收到 token 过期通知，连接即将被服务端关闭 token={}", key);
+                }
                 if (hasPacketError(error)) {
+                    String cmdName = XyzwCommandNameRegistry.getName(cmd);
                     if (isBottleAlreadyOccupiedError(cmd, error)) {
-                        logger.info("WebSocket 罐子启动提示：{} cmd={} token={}", error, cmd, key);
+                        if (task == null) {
+                            logger.info("WebSocket 罐子启动提示：{} cmd={} cmdName={} token={}", error, cmd, cmdName, key);
+                        } else {
+                            logger.info(
+                                "WebSocket 罐子启动提示：{} cmd={} cmdName={} task={} token={}",
+                                error,
+                                cmd,
+                                cmdName,
+                                task,
+                                key
+                            );
+                        }
                     } else {
-                        logger.warn("WebSocket 命令返回错误 cmd={} error={} token={}", cmd, error, key);
+                        if (task == null) {
+                            logger.warn("WebSocket 命令返回错误 cmd={} cmdName={} error={} token={}", cmd, cmdName, error, key);
+                        } else {
+                            logger.warn(
+                                "WebSocket 命令返回错误 cmd={} cmdName={} error={} task={} token={}",
+                                cmd,
+                                cmdName,
+                                error,
+                                task,
+                                key
+                            );
+                        }
                     }
                 }
                 Object body = packet.get("body");
@@ -129,7 +178,7 @@ final class XyzwWsClient extends WebSocketClient {
                 if (body instanceof byte[]) {
                     bodyDecoded = codec.decode((byte[]) body);
                 }
-                packetListener.onPacket(key, cmd, bodyDecoded);
+                packetListener.onPacket(key, cmd, bodyDecoded, error);
             }
         } catch (Exception ex) {
             logger.warn("WebSocket 解码失败 token={}", key, ex);
@@ -144,6 +193,8 @@ final class XyzwWsClient extends WebSocketClient {
         String normalizedReason = normalizeReason(reason);
         if (kickedByOtherLogin) {
             normalizedReason = "other login";
+        } else if (!NO_REASON.equals(fatalReason)) {
+            normalizedReason = fatalReason;
         }
         logger.info(
             "WebSocket 连接关闭: code={}, reason={}, remote={}, closedByClient={}, closeReasonByClient={}, aliveMs={}, lastCmd={}, lastSendAgoMs={}, token={}",
@@ -199,11 +250,33 @@ final class XyzwWsClient extends WebSocketClient {
         if (!"_sys/ack".equals(cmd)) {
             lastCmd = cmd;
             lastSendAtMs = System.currentTimeMillis();
-            logger.info("发送指令 cmd={} token={}", cmd, key);
+            String label = normalizeTaskLabel(taskLabel);
+            String bodyText = summarizeBody(body);
+            String cmdName = XyzwCommandNameRegistry.getName(cmd);
+            if (commandSendListener != null) {
+                try {
+                    commandSendListener.onSend(key, label, cmd, cmdName, bodyText);
+                } catch (Exception ex) {
+                    logger.debug("WebSocket 指令发送日志回调失败 token={} cmd={}", key, cmd, ex);
+                }
+            }
+            if (label == null) {
+                logger.info("发送指令 cmd={} cmdName={} body={} token={}", cmd, cmdName, bodyText, key);
+            } else {
+                logger.info("发送指令 cmd={} cmdName={} task={} body={} token={}", cmd, cmdName, label, bodyText, key);
+            }
         }
         byte[] encoded = codec.encode(packet);
         byte[] encrypted = crypto.encryptX(encoded);
         send(encrypted);
+    }
+
+    void setTaskLabel(String taskLabel) {
+        this.taskLabel = normalizeTaskLabel(taskLabel);
+    }
+
+    String getLastCmd() {
+        return lastCmd;
     }
 
     void startHeartbeat() {
@@ -315,5 +388,35 @@ final class XyzwWsClient extends WebSocketClient {
         }
         String text = ((String) error).trim().toLowerCase(Locale.ROOT);
         return "other login".equals(text);
+    }
+
+    private boolean isTokenExpiredFatal(String cmd, Object error) {
+        if (cmd == null || !"_sys/fatal".equals(cmd)) {
+            return false;
+        }
+        if (!(error instanceof String)) {
+            return false;
+        }
+        String text = ((String) error).trim().toLowerCase(Locale.ROOT);
+        return text.contains("token expired") || text.contains("token invalid");
+    }
+
+    private String normalizeTaskLabel(String value) {
+        if (value == null) {
+            return null;
+        }
+        String text = value.trim();
+        return text.isEmpty() ? null : text;
+    }
+
+    private String summarizeBody(Map<String, Object> body) {
+        if (body == null || body.isEmpty()) {
+            return "{}";
+        }
+        String text = String.valueOf(body);
+        if (text.length() <= 240) {
+            return text;
+        }
+        return text.substring(0, 140) + "..." + text.substring(text.length() - 80) + "(len=" + text.length() + ")";
     }
 }
